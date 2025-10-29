@@ -25,116 +25,56 @@ data "aws_iot_endpoint" "iot" {}
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
-
 module "vpc" {
-  source                = "./modules/vpc/vpc"
-  vpc_name              = "vpc"
-  vpc_cidr_block        = "10.0.0.0/16"
-  enable_dns_hostnames  = true
-  enable_dns_support    = true
-  internet_gateway_name = "vpc_igw"
+  source                  = "./modules/vpc"
+  vpc_name                = "vpc"
+  vpc_cidr                = "10.0.0.0/16"
+  azs                     = var.azs
+  public_subnets          = var.public_subnets
+  private_subnets         = var.private_subnets
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  create_igw              = true
+  map_public_ip_on_launch = true
+  enable_nat_gateway      = false
+  single_nat_gateway      = false
+  one_nat_gateway_per_az  = false
+  tags = {
+    Project     = "ha-airflow"
+  }
 }
 
 # Security Group
-module "security_group" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
+resource "aws_security_group" "security_group" {
   name   = "security-group"
-  ingress = [
-    {
-      from_port       = 80
-      to_port         = 80
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    },
-    {
-      from_port       = 22
-      to_port         = 22
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Public Subnets
-module "public_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "public-subnet"
-  subnets = [
-    {
-      subnet = "10.0.1.0/24"
-      az     = "us-east-1a"
-    },
-    {
-      subnet = "10.0.2.0/24"
-      az     = "us-east-1b"
-    },
-    {
-      subnet = "10.0.3.0/24"
-      az     = "us-east-1c"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
-  map_public_ip_on_launch = true
-}
-
-# Private Subnets
-module "private_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "private-subnet"
-  subnets = [
-    {
-      subnet = "10.0.6.0/24"
-      az     = "us-east-1a"
-    },
-    {
-      subnet = "10.0.5.0/24"
-      az     = "us-east-1b"
-    },
-    {
-      subnet = "10.0.4.0/24"
-      az     = "us-east-1c"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
-  map_public_ip_on_launch = false
-}
-
-# Public Route Table
-module "public_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "public-route-table"
-  subnets = module.public_subnets.subnets[*]
-  routes = [
-    {
-      cidr_block = "0.0.0.0/0"
-      gateway_id = module.vpc.igw_id
-    }
-  ]
   vpc_id = module.vpc.vpc_id
-}
 
-# Private Route Table
-module "private_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "private-route-table"
-  subnets = module.private_subnets.subnets[*]
-  routes  = []
-  vpc_id  = module.vpc.vpc_id
+  ingress {
+    description = "HTTP traffic"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "SSH traffic"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "security-group"
+  }
 }
 
 # -----------------------------------------------------------------------------------------
@@ -206,8 +146,8 @@ module "iot_instance" {
     PRIVATE_KEY = "${tls_private_key.device_key.private_key_pem}"
   }))
   instance_profile = aws_iam_instance_profile.iam_instance_profile.name
-  subnet_id        = module.public_subnets.subnets[0].id
-  security_groups  = [module.security_group.id]
+  subnet_id        = module.vpc.public_subnets[0]
+  security_groups  = [aws_security_group.security_group.id]
 }
 
 # -----------------------------------------------------------------------------------------
@@ -413,7 +353,6 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
 # -----------------------------------------------------------------------------------------
 # Glue Configuration
 # -----------------------------------------------------------------------------------------
-
 resource "aws_iam_role" "glue_crawler_role" {
   name = "glue-crawler-role"
 
