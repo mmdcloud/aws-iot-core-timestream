@@ -15,8 +15,8 @@ resource "tls_self_signed_cert" "device_cert" {
   allowed_uses          = ["key_encipherment", "digital_signature", "server_auth"]
 
   subject {
-    common_name  = "my-iot-device"
-    organization = "MyOrg"
+    common_name  = "iot-device"
+    organization = "iot-org"
   }
 }
 
@@ -40,7 +40,7 @@ module "vpc" {
   single_nat_gateway      = false
   one_nat_gateway_per_az  = false
   tags = {
-    Project     = "ha-airflow"
+    Project = "iot"
   }
 }
 
@@ -80,7 +80,6 @@ resource "aws_security_group" "security_group" {
 # -----------------------------------------------------------------------------------------
 # IOT Device Simulated Instance
 # -----------------------------------------------------------------------------------------
-
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["amazon"]
@@ -153,7 +152,6 @@ module "iot_instance" {
 # -----------------------------------------------------------------------------------------
 # Kinesis module
 # -----------------------------------------------------------------------------------------
-
 module "kinesis_stream" {
   source           = "./modules/kinesis"
   name             = "kinesis-stream"
@@ -169,7 +167,6 @@ module "kinesis_stream" {
 # -----------------------------------------------------------------------------------------
 # S3 Configuration
 # -----------------------------------------------------------------------------------------
-
 module "destination_bucket" {
   source             = "./modules/s3"
   bucket_name        = "destination-bucket-${random_id.id.hex}"
@@ -181,6 +178,29 @@ module "destination_bucket" {
 module "athena_temp_results_bucket" {
   source             = "./modules/s3"
   bucket_name        = "athena-temp-results-bucket-${random_id.id.hex}"
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
+module "transform_function_code" {
+  source        = "./modules/s3"
+  bucket_name   = "transform-function-code-bucket"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
   versioning_enabled = "Enabled"
   force_destroy      = true
 }
@@ -256,9 +276,64 @@ resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
 }
 
 # -----------------------------------------------------------------------------------------
+# Lambda Configuration
+# -----------------------------------------------------------------------------------------
+module "lambda_function_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "transform-function-iam-role"
+  role_description   = "IAM role for transform lambda function"
+  policy_name        = "transform-function-iam-policy"
+  policy_description = "IAM policy for transform lambda function"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": "arn:aws:logs:*:*:*",
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
+}
+
+module "transform_function" {
+  source                  = "./modules/lambda"
+  function_name           = "transform-function"
+  role_arn                = module.lambda_function_iam_role.arn
+  permissions             = []
+  env_variables           = {}
+  handler                 = "lambda.lambda_handler"
+  runtime                 = "python3.12"
+  s3_bucket               = module.transform_function_code.bucket
+  s3_key                  = "lambda.zip"
+  layers                  = []
+  code_signing_config_arn = ""
+}
+
+# -----------------------------------------------------------------------------------------
 # IOT Core Configuration
 # -----------------------------------------------------------------------------------------
-
 resource "aws_iot_thing" "thing" {
   name = "thing"
 }
