@@ -178,29 +178,15 @@ module "destination_bucket" {
 module "athena_temp_results_bucket" {
   source             = "./modules/s3"
   bucket_name        = "athena-temp-results-bucket-${random_id.id.hex}"
+  objects            = []
   versioning_enabled = "Enabled"
   force_destroy      = true
 }
 
 module "transform_function_code" {
-  source        = "./modules/s3"
-  bucket_name   = "transform-function-code-bucket"
-  objects       = []
-  bucket_policy = ""
-  cors = [
-    {
-      allowed_headers = ["*"]
-      allowed_methods = ["GET"]
-      allowed_origins = ["*"]
-      max_age_seconds = 3000
-    },
-    {
-      allowed_headers = ["*"]
-      allowed_methods = ["PUT"]
-      allowed_origins = ["*"]
-      max_age_seconds = 3000
-    }
-  ]
+  source             = "./modules/s3"
+  bucket_name        = "transform-function-code-bucket"
+  objects            = []
   versioning_enabled = "Enabled"
   force_destroy      = true
 }
@@ -208,55 +194,57 @@ module "transform_function_code" {
 # -----------------------------------------------------------------------------------------
 # Kinesis Data Firehose
 # -----------------------------------------------------------------------------------------
-resource "aws_iam_role" "firehose_role" {
-  name = "firehose_delivery_role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "firehose.amazonaws.com"
-      }
-    }]
-  })
-}
-
-resource "aws_iam_policy" "firehose_policy" {
-  name = "firehose_policy"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:ListBucket"
+module "firehose_role" {
+  source             = "./modules/iam"
+  role_name          = "firehose-delivery-role"
+  role_description   = "IAM role for Kinesis Data Firehose"
+  policy_name        = "firehose-delivery-policy"
+  policy_description = "IAM policy for Kinesis Data Firehose"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "firehose.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
         ]
-        Resource = [
-          "${module.destination_bucket.arn}",
-          "${module.destination_bucket.arn}/*"
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "s3:PutObject",
+                  "s3:PutObjectAcl",
+                  "s3:ListBucket"
+                ],
+                "Resource": [
+                  "${module.destination_bucket.arn}",
+                  "${module.destination_bucket.arn}/*"
+                ],
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
+                  "kinesis:DescribeStream",
+                  "kinesis:GetShardIterator",
+                  "kinesis:GetRecords"
+                ],
+                "Resource": [
+                  "${module.kinesis_stream.arn}"
+                ],
+                "Effect": "Allow"
+            }
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "kinesis:DescribeStream",
-          "kinesis:GetShardIterator",
-          "kinesis:GetRecords"
-        ]
-        Resource = ["${module.kinesis_stream.arn}"]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "firehose_attach" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.firehose_policy.arn
+    }
+    EOF
 }
 
 resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
@@ -265,11 +253,11 @@ resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
 
   kinesis_source_configuration {
     kinesis_stream_arn = module.kinesis_stream.arn
-    role_arn           = aws_iam_role.firehose_role.arn
+    role_arn           = module.firehose_role.arn
   }
 
   extended_s3_configuration {
-    role_arn           = aws_iam_role.firehose_role.arn
+    role_arn           = module.firehose_role.arn
     bucket_arn         = module.destination_bucket.arn
     compression_format = "UNCOMPRESSED"
   }
@@ -373,41 +361,44 @@ resource "aws_iot_policy_attachment" "policy_attach" {
 }
 
 # IAM Role that AWS IoT will assume to write to Kinesis
-resource "aws_iam_role" "iot_kinesis_role" {
-  name = "iot_kinesis_role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
-      Principal = {
-        Service = "iot.amazonaws.com"
-      }
-    }]
-  })
-}
-
-# Attach permissions allowing the role to put records to Kinesis
-resource "aws_iam_policy" "iot_kinesis_policy" {
-  name = "iot_kinesis_policy"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Action = [
-        "kinesis:PutRecord",
-        "kinesis:PutRecords"
-      ],
-      Resource = "${module.kinesis_stream.arn}"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "iot_kinesis_attach" {
-  role       = aws_iam_role.iot_kinesis_role.name
-  policy_arn = aws_iam_policy.iot_kinesis_policy.arn
+module "iot_kinesis_role" {
+  source             = "./modules/iam"
+  role_name          = "iot-kinesis-role"
+  role_description   = "IAM role for Kinesis Data Firehose"
+  policy_name        = "iot-kinesis-policy"
+  policy_description = "IAM policy for Kinesis Data Firehose"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "iot.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "kinesis:PutRecord",
+                  "kinesis:PutRecords"
+                ],
+                "Resource": [
+                  "${module.kinesis_stream.arn}"
+                ],
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
 }
 
 # AWS IoT Topic Rule that sends data from a topic to Kinesis Data Stream
@@ -421,7 +412,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   kinesis {
     stream_name   = module.kinesis_stream.name
     partition_key = "deviceId"
-    role_arn      = aws_iam_role.iot_kinesis_role.arn
+    role_arn      = module.iot_kinesis_role.arn
   }
 }
 
