@@ -2,25 +2,25 @@ resource "random_id" "id" {
   byte_length = 8
 }
 
-# Generate private key locally
+data "aws_iot_endpoint" "iot" {}
+
+# -----------------------------------------------------------------------------------------
+# Certificate Configuration
+# -----------------------------------------------------------------------------------------
 resource "tls_private_key" "device_key" {
   algorithm = "RSA"
   rsa_bits  = 2048
 }
 
-# Generate a self-signed certificate locally
 resource "tls_self_signed_cert" "device_cert" {
   private_key_pem       = tls_private_key.device_key.private_key_pem
   validity_period_hours = 8760
   allowed_uses          = ["key_encipherment", "digital_signature", "server_auth"]
-
   subject {
     common_name  = "iot-device"
     organization = "iot-org"
   }
 }
-
-data "aws_iot_endpoint" "iot" {}
 
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
@@ -45,33 +45,35 @@ module "vpc" {
 }
 
 # Security Group
-resource "aws_security_group" "security_group" {
+module "security_group" {
+  source = "./modules/security-groups"
   name   = "security-group"
   vpc_id = module.vpc.vpc_id
-
-  ingress {
-    description = "HTTP traffic"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "SSH traffic"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
+  ingress_rules = [
+    {
+      description = "HTTP Traffic"
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "SSH Traffic"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
   tags = {
     Name = "security-group"
   }
@@ -95,41 +97,46 @@ data "aws_ami" "ubuntu" {
 }
 
 # EC2 IAM Instance Profile
-data "aws_iam_policy_document" "instance_profile_assume_role" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.amazonaws.com"]
+module "instance_profile_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "transform-function-iam-role"
+  role_description   = "IAM role for transform lambda function"
+  policy_name        = "transform-function-iam-policy"
+  policy_description = "IAM policy for transform lambda function"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "ec2.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
     }
-
-    actions = ["sts:AssumeRole"]
-  }
-}
-
-resource "aws_iam_role" "instance_profile_iam_role" {
-  name               = "instance-profile-role"
-  path               = "/"
-  assume_role_policy = data.aws_iam_policy_document.instance_profile_assume_role.json
-}
-
-data "aws_iam_policy_document" "instance_profile_policy_document" {
-  statement {
-    effect    = "Allow"
-    actions   = ["kinesis:*"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_role_policy" "instance_profile_s3_policy" {
-  role   = aws_iam_role.instance_profile_iam_role.name
-  policy = data.aws_iam_policy_document.instance_profile_policy_document.json
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "kinesis:*"
+                ],
+                "Resource": "*",
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
 }
 
 resource "aws_iam_instance_profile" "iam_instance_profile" {
   name = "iam-instance-profile"
-  role = aws_iam_role.instance_profile_iam_role.name
+  role = module.instance_profile_iam_role.name
 }
 
 module "iot_instance" {
@@ -146,7 +153,61 @@ module "iot_instance" {
   }))
   instance_profile = aws_iam_instance_profile.iam_instance_profile.name
   subnet_id        = module.vpc.public_subnets[0]
-  security_groups  = [aws_security_group.security_group.id]
+  security_groups  = [module.security_group.id]
+}
+
+# -----------------------------------------------------------------------------------------
+# S3 Configuration
+# -----------------------------------------------------------------------------------------
+module "destination_bucket" {
+  source        = "./modules/s3"
+  bucket_name   = "destination-bucket-${random_id.id.hex}"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
+module "athena_temp_results_bucket" {
+  source        = "./modules/s3"
+  bucket_name   = "athena-temp-results-bucket-${random_id.id.hex}"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
+module "transform_function_code" {
+  source        = "./modules/s3"
+  bucket_name   = "transform-function-code-bucket-${random_id.id.hex}"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
 }
 
 # -----------------------------------------------------------------------------------------
@@ -163,32 +224,60 @@ module "kinesis_stream" {
   stream_mode = "ON_DEMAND"
 }
 
-
 # -----------------------------------------------------------------------------------------
-# S3 Configuration
+# Lambda Configuration
 # -----------------------------------------------------------------------------------------
-module "destination_bucket" {
-  source             = "./modules/s3"
-  bucket_name        = "destination-bucket-${random_id.id.hex}"
-  objects            = []
-  versioning_enabled = "Enabled"
-  force_destroy      = true
+module "lambda_function_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "transform-function-iam-role"
+  role_description   = "IAM role for transform lambda function"
+  policy_name        = "transform-function-iam-policy"
+  policy_description = "IAM policy for transform lambda function"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": "arn:aws:logs:*:*:*",
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
 }
 
-module "athena_temp_results_bucket" {
-  source             = "./modules/s3"
-  bucket_name        = "athena-temp-results-bucket-${random_id.id.hex}"
-  objects            = []
-  versioning_enabled = "Enabled"
-  force_destroy      = true
-}
-
-module "transform_function_code" {
-  source             = "./modules/s3"
-  bucket_name        = "transform-function-code-bucket"
-  objects            = []
-  versioning_enabled = "Enabled"
-  force_destroy      = true
+module "transform_function" {
+  source                  = "./modules/lambda"
+  function_name           = "transform-function"
+  role_arn                = module.lambda_function_iam_role.arn
+  permissions             = []
+  env_variables           = {}
+  handler                 = "lambda.lambda_handler"
+  runtime                 = "python3.12"
+  s3_bucket               = module.transform_function_code.bucket
+  s3_key                  = "lambda.zip"
+  layers                  = []
+  code_signing_config_arn = ""
 }
 
 # -----------------------------------------------------------------------------------------
@@ -250,9 +339,9 @@ module "firehose_role" {
 resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
   name        = "firehose-stream"
   destination = "extended_s3"
-
+  
   kinesis_source_configuration {
-    kinesis_stream_arn = module.kinesis_stream.arn
+    kinesis_stream_arn = module.kinesis_stream.arn    
     role_arn           = module.firehose_role.arn
   }
 
@@ -261,62 +350,6 @@ resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
     bucket_arn         = module.destination_bucket.arn
     compression_format = "UNCOMPRESSED"
   }
-}
-
-# -----------------------------------------------------------------------------------------
-# Lambda Configuration
-# -----------------------------------------------------------------------------------------
-module "lambda_function_iam_role" {
-  source             = "./modules/iam"
-  role_name          = "transform-function-iam-role"
-  role_description   = "IAM role for transform lambda function"
-  policy_name        = "transform-function-iam-policy"
-  policy_description = "IAM policy for transform lambda function"
-  assume_role_policy = <<EOF
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Action": "sts:AssumeRole",
-                "Principal": {
-                  "Service": "lambda.amazonaws.com"
-                },
-                "Effect": "Allow",
-                "Sid": ""
-            }
-        ]
-    }
-    EOF
-  policy             = <<EOF
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Action": [
-                  "logs:CreateLogGroup",
-                  "logs:CreateLogStream",
-                  "logs:PutLogEvents"
-                ],
-                "Resource": "arn:aws:logs:*:*:*",
-                "Effect": "Allow"
-            }
-        ]
-    }
-    EOF
-}
-
-module "transform_function" {
-  source                  = "./modules/lambda"
-  function_name           = "transform-function"
-  role_arn                = module.lambda_function_iam_role.arn
-  permissions             = []
-  env_variables           = {}
-  handler                 = "lambda.lambda_handler"
-  runtime                 = "python3.12"
-  s3_bucket               = module.transform_function_code.bucket
-  s3_key                  = "lambda.zip"
-  layers                  = []
-  code_signing_config_arn = ""
 }
 
 # -----------------------------------------------------------------------------------------
@@ -482,6 +515,9 @@ resource "aws_glue_crawler" "crawler" {
   }
 }
 
+# -----------------------------------------------------------------------------------------
+# Athena Configuration
+# -----------------------------------------------------------------------------------------
 resource "aws_athena_workgroup" "workgroup" {
   name        = "workgroup"
   description = "Athena workgroup for querying IoT data"
@@ -492,5 +528,27 @@ resource "aws_athena_workgroup" "workgroup" {
     result_configuration {
       output_location = "s3://${module.athena_temp_results_bucket.bucket}/"
     }
+  }
+}
+
+# -----------------------------------------------------------------------------------------
+# Timestream Configuration
+# -----------------------------------------------------------------------------------------
+module "timestream" {
+  source                  = "./modules/timestream"
+  vpc_name                = "vpc"
+  vpc_cidr                = "10.0.0.0/16"
+  azs                     = var.azs
+  public_subnets          = var.public_subnets
+  private_subnets         = var.private_subnets
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  create_igw              = true
+  map_public_ip_on_launch = true
+  enable_nat_gateway      = false
+  single_nat_gateway      = false
+  one_nat_gateway_per_az  = false
+  tags = {
+    Project = "iot"
   }
 }
