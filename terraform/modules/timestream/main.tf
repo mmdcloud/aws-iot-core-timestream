@@ -1,51 +1,14 @@
 resource "aws_timestreaminfluxdb_db_instance" "name" {
-  
-}
-
-resource "aws_timestreamwrite_database" "main" {
-  database_name = var.timestream_db_name
-  kms_key_id    = aws_kms_key.timestream_key.arn
-
-  tags = merge(
-    {
-      "Environment" = "production"
-      "Name"        = var.timestream_db_name
-    },
-    var.tags
-  )
-}
-
-resource "aws_kms_key" "timestream_key" {
-  description         = "KMS key for Timestream encryption"
-  enable_key_rotation = true
-
-  tags = merge(
-    {
-      "Environment" = "production"
-      "Name"        = "timestream"
-    },
-    var.tags
-  )
-}
-
-resource "aws_timestream" "name" {
-
-}
-
-resource "aws_timestreamwrite_table" "main" {
-  database_name = aws_timestreamwrite_database.main.database_name
-  table_name    = "${var.timestream_db_name}_table"
-
-  retention_properties {
-    memory_store_retention_period_in_hours  = 48
-    magnetic_store_retention_period_in_days = 365
-  }
-
-  tags = merge(
-    {
-      "Environment" = "production"
-      "Name"        = "${var.timestream_db_name}_table"
-    },
-    var.tags
-  )
+  publicly_accessible    = var.publicly_accessible
+  db_instance_type       = var.db_instance_type
+  allocated_storage      = var.allocated_storage
+  name                   = var.timestream_db_name
+  username               = var.timestream_db_username
+  password               = var.timestream_db_password
+  vpc_security_group_ids = var.vpc_security_group_ids
+  vpc_subnet_ids         = var.vpc_subnet_ids
+  bucket                 = var.bucket
+  organization           = var.organization
+  port = var.port
+  tags                   = var.tags
 }

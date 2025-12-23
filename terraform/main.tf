@@ -45,9 +45,9 @@ module "vpc" {
 }
 
 # Security Group
-module "security_group" {
+module "iot_instance_security_group" {
   source = "./modules/security-groups"
-  name   = "security-group"
+  name   = "iot-instance-security-group"
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
@@ -55,6 +55,7 @@ module "security_group" {
       from_port   = 80
       to_port     = 80
       protocol    = "tcp"
+      security_groups = []
       cidr_blocks = ["0.0.0.0/0"]
     },
     {
@@ -62,6 +63,35 @@ module "security_group" {
       from_port   = 22
       to_port     = 22
       protocol    = "tcp"
+      security_groups = []
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "security-group"
+  }
+}
+
+module "influxdb_security_group" {
+  source = "./modules/security-groups"
+  name   = "influxdb-security-group"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "InfluxDB Traffic"
+      from_port   = 8086
+      to_port     = 8086
+      protocol    = "tcp"
+      security_groups = []
       cidr_blocks = ["0.0.0.0/0"]
     }
   ]
@@ -126,7 +156,7 @@ module "instance_profile_iam_role" {
                 "Action": [
                   "kinesis:*"
                 ],
-                "Resource": "*",
+                "Resource": "${module.kinesis_stream.arn}",
                 "Effect": "Allow"
             }
         ]
@@ -153,7 +183,7 @@ module "iot_instance" {
   }))
   instance_profile = aws_iam_instance_profile.iam_instance_profile.name
   subnet_id        = module.vpc.public_subnets[0]
-  security_groups  = [module.security_group.id]
+  security_groups  = [module.iot_instance_security_group.id]
 }
 
 # -----------------------------------------------------------------------------------------
@@ -283,74 +313,74 @@ module "transform_function" {
 # -----------------------------------------------------------------------------------------
 # Kinesis Data Firehose
 # -----------------------------------------------------------------------------------------
-module "firehose_role" {
-  source             = "./modules/iam"
-  role_name          = "firehose-delivery-role"
-  role_description   = "IAM role for Kinesis Data Firehose"
-  policy_name        = "firehose-delivery-policy"
-  policy_description = "IAM policy for Kinesis Data Firehose"
-  assume_role_policy = <<EOF
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Action": "sts:AssumeRole",
-                "Principal": {
-                  "Service": "firehose.amazonaws.com"
-                },
-                "Effect": "Allow",
-                "Sid": ""
-            }
-        ]
-    }
-    EOF
-  policy             = <<EOF
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Action": [
-                  "s3:PutObject",
-                  "s3:PutObjectAcl",
-                  "s3:ListBucket"
-                ],
-                "Resource": [
-                  "${module.destination_bucket.arn}",
-                  "${module.destination_bucket.arn}/*"
-                ],
-                "Effect": "Allow"
-            },
-            {
-                "Action": [
-                  "kinesis:DescribeStream",
-                  "kinesis:GetShardIterator",
-                  "kinesis:GetRecords"
-                ],
-                "Resource": [
-                  "${module.kinesis_stream.arn}"
-                ],
-                "Effect": "Allow"
-            }
-        ]
-    }
-    EOF
-}
+# module "firehose_role" {
+#   source             = "./modules/iam"
+#   role_name          = "firehose-delivery-role"
+#   role_description   = "IAM role for Kinesis Data Firehose"
+#   policy_name        = "firehose-delivery-policy"
+#   policy_description = "IAM policy for Kinesis Data Firehose"
+#   assume_role_policy = <<EOF
+#     {
+#         "Version": "2012-10-17",
+#         "Statement": [
+#             {
+#                 "Action": "sts:AssumeRole",
+#                 "Principal": {
+#                   "Service": "firehose.amazonaws.com"
+#                 },
+#                 "Effect": "Allow",
+#                 "Sid": ""
+#             }
+#         ]
+#     }
+#     EOF
+#   policy             = <<EOF
+#     {
+#         "Version": "2012-10-17",
+#         "Statement": [
+#             {
+#                 "Action": [
+#                   "s3:PutObject",
+#                   "s3:PutObjectAcl",
+#                   "s3:ListBucket"
+#                 ],
+#                 "Resource": [
+#                   "${module.destination_bucket.arn}",
+#                   "${module.destination_bucket.arn}/*"
+#                 ],
+#                 "Effect": "Allow"
+#             },
+#             {
+#                 "Action": [
+#                   "kinesis:DescribeStream",
+#                   "kinesis:GetShardIterator",
+#                   "kinesis:GetRecords"
+#                 ],
+#                 "Resource": [
+#                   "${module.kinesis_stream.arn}"
+#                 ],
+#                 "Effect": "Allow"
+#             }
+#         ]
+#     }
+#     EOF
+# }
 
-resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
-  name        = "firehose-stream"
-  destination = "extended_s3"
-  
-  kinesis_source_configuration {
-    kinesis_stream_arn = module.kinesis_stream.arn    
-    role_arn           = module.firehose_role.arn
-  }
+# resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
+#   name        = "firehose-stream"
+#   destination = "extended_s3"
 
-  extended_s3_configuration {
-    role_arn           = module.firehose_role.arn
-    bucket_arn         = module.destination_bucket.arn
-    compression_format = "UNCOMPRESSED"
-  }
-}
+#   kinesis_source_configuration {
+#     kinesis_stream_arn = module.kinesis_stream.arn    
+#     role_arn           = module.firehose_role.arn
+#   }
+
+#   extended_s3_configuration {
+#     role_arn           = module.firehose_role.arn
+#     bucket_arn         = module.destination_bucket.arn
+#     compression_format = "UNCOMPRESSED"
+#   }
+# }
 
 # -----------------------------------------------------------------------------------------
 # IOT Core Configuration
@@ -535,20 +565,20 @@ resource "aws_athena_workgroup" "workgroup" {
 # Timestream Configuration
 # -----------------------------------------------------------------------------------------
 module "timestream" {
-  source                  = "./modules/timestream"
-  vpc_name                = "vpc"
-  vpc_cidr                = "10.0.0.0/16"
-  azs                     = var.azs
-  public_subnets          = var.public_subnets
-  private_subnets         = var.private_subnets
-  enable_dns_hostnames    = true
-  enable_dns_support      = true
-  create_igw              = true
-  map_public_ip_on_launch = true
-  enable_nat_gateway      = false
-  single_nat_gateway      = false
-  one_nat_gateway_per_az  = false
+  source                 = "./modules/timestream"
+  db_instance_type       = "t3.medium"
+  allocated_storage      = "20"
+  timestream_db_name     = "iot_timestream_db"
+  port                   = 8086
+  timestream_db_username = "timestream_user"
+  timestream_db_password = "StrongPassword123!"
+  vpc_security_group_ids = [module.influxdb_security_group.id]
+  vpc_subnet_ids         = module.vpc.private_subnets
+  bucket                 = module.destination_bucket.bucket
+  organization           = "iot-organization"
+  publicly_accessible    = false
   tags = {
-    Project = "iot"
+    Project     = "iot"
+    Environment = "production"
   }
 }

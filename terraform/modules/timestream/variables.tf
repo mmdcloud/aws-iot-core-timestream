@@ -1,15 +1,59 @@
-variable "aws_region" {
-  description = "AWS region to deploy the resources"
-  type        = string
+variable "db_instance_type" {
+  type    = string
+  default = ""
+}
+
+variable "allocated_storage" {
+  type    = string
+  default = ""
 }
 
 variable "timestream_db_name" {
-  description = "Name for the Timestream database"
-  type        = string
+  type    = string
+  default = ""
+}
+
+variable "timestream_db_username" {
+  type    = string
+  default = ""
+}
+
+variable "timestream_db_password" {
+  type    = string
+  default = ""
+}
+
+variable "vpc_security_group_ids" {
+  type    = list(string)
+  default = []
+}
+
+variable "vpc_subnet_ids" {
+  type    = list(string)
+  default = []
+}
+
+variable "bucket" {
+  type    = string
+  default = ""
+}
+
+variable "organization" {
+  type    = string
+  default = ""
+}
+
+variable "port" {
+  type    = number
+  default = ""
+}
+
+variable "publicly_accessible" {
+  type    = bool
+  default = false
 }
 
 variable "tags" {
-  description = "Resource tags"
-  type        = map(string)
-  default     = {}
+  type    = map(string)
+  default = {}
 }
