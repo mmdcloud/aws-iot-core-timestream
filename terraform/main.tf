@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------------------
+# Registering vault provider
+# -----------------------------------------------------------------------------------------
+data "vault_generic_secret" "timestream" {
+  path = "secret/timestream"
+}
+
 resource "random_id" "id" {
   byte_length = 8
 }
@@ -51,20 +58,20 @@ module "iot_instance_security_group" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description = "HTTP Traffic"
-      from_port   = 80
-      to_port     = 80
-      protocol    = "tcp"
+      description     = "HTTP Traffic"
+      from_port       = 80
+      to_port         = 80
+      protocol        = "tcp"
       security_groups = []
-      cidr_blocks = ["0.0.0.0/0"]
+      cidr_blocks     = ["0.0.0.0/0"]
     },
     {
-      description = "SSH Traffic"
-      from_port   = 22
-      to_port     = 22
-      protocol    = "tcp"
+      description     = "SSH Traffic"
+      from_port       = 22
+      to_port         = 22
+      protocol        = "tcp"
       security_groups = []
-      cidr_blocks = ["0.0.0.0/0"]
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -87,12 +94,12 @@ module "influxdb_security_group" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description = "InfluxDB Traffic"
-      from_port   = 8086
-      to_port     = 8086
-      protocol    = "tcp"
+      description     = "InfluxDB Traffic"
+      from_port       = 8086
+      to_port         = 8086
+      protocol        = "tcp"
       security_groups = []
-      cidr_blocks = ["0.0.0.0/0"]
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -290,6 +297,17 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": "arn:aws:logs:*:*:*",
                 "Effect": "Allow"
+            },
+            {
+                "Action": [
+                  "kinesis:GetRecords",
+                  "kinesis:GetShardIterator",
+                  "kinesis:DescribeStream",
+                  "kinesis:DescribeStreamSummary",
+                  "kinesis:ListShards"
+                ],
+                "Resource": "${module.kinesis_stream.arn}",
+                "Effect": "Allow"
             }
         ]
     }
@@ -310,77 +328,15 @@ module "transform_function" {
   code_signing_config_arn = ""
 }
 
-# -----------------------------------------------------------------------------------------
-# Kinesis Data Firehose
-# -----------------------------------------------------------------------------------------
-# module "firehose_role" {
-#   source             = "./modules/iam"
-#   role_name          = "firehose-delivery-role"
-#   role_description   = "IAM role for Kinesis Data Firehose"
-#   policy_name        = "firehose-delivery-policy"
-#   policy_description = "IAM policy for Kinesis Data Firehose"
-#   assume_role_policy = <<EOF
-#     {
-#         "Version": "2012-10-17",
-#         "Statement": [
-#             {
-#                 "Action": "sts:AssumeRole",
-#                 "Principal": {
-#                   "Service": "firehose.amazonaws.com"
-#                 },
-#                 "Effect": "Allow",
-#                 "Sid": ""
-#             }
-#         ]
-#     }
-#     EOF
-#   policy             = <<EOF
-#     {
-#         "Version": "2012-10-17",
-#         "Statement": [
-#             {
-#                 "Action": [
-#                   "s3:PutObject",
-#                   "s3:PutObjectAcl",
-#                   "s3:ListBucket"
-#                 ],
-#                 "Resource": [
-#                   "${module.destination_bucket.arn}",
-#                   "${module.destination_bucket.arn}/*"
-#                 ],
-#                 "Effect": "Allow"
-#             },
-#             {
-#                 "Action": [
-#                   "kinesis:DescribeStream",
-#                   "kinesis:GetShardIterator",
-#                   "kinesis:GetRecords"
-#                 ],
-#                 "Resource": [
-#                   "${module.kinesis_stream.arn}"
-#                 ],
-#                 "Effect": "Allow"
-#             }
-#         ]
-#     }
-#     EOF
-# }
-
-# resource "aws_kinesis_firehose_delivery_stream" "firehose_to_s3" {
-#   name        = "firehose-stream"
-#   destination = "extended_s3"
-
-#   kinesis_source_configuration {
-#     kinesis_stream_arn = module.kinesis_stream.arn    
-#     role_arn           = module.firehose_role.arn
-#   }
-
-#   extended_s3_configuration {
-#     role_arn           = module.firehose_role.arn
-#     bucket_arn         = module.destination_bucket.arn
-#     compression_format = "UNCOMPRESSED"
-#   }
-# }
+resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
+  event_source_arn                   = module.kinesis_stream.arn
+  function_name                      = module.transform_function.arn
+  starting_position                  = "LATEST"
+  batch_size                         = 100
+  maximum_batching_window_in_seconds = 5
+  parallelization_factor             = 1
+  enabled                            = true
+}
 
 # -----------------------------------------------------------------------------------------
 # IOT Core Configuration
@@ -570,8 +526,8 @@ module "timestream" {
   allocated_storage      = "20"
   timestream_db_name     = "iot_timestream_db"
   port                   = 8086
-  timestream_db_username = "timestream_user"
-  timestream_db_password = "StrongPassword123!"
+  timestream_db_username = tostring(data.vault_generic_secret.timestream.data["username"])
+  timestream_db_password = tostring(data.vault_generic_secret.timestream.data["password"])
   vpc_security_group_ids = [module.influxdb_security_group.id]
   vpc_subnet_ids         = module.vpc.private_subnets
   bucket                 = module.destination_bucket.bucket
