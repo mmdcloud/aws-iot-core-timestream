@@ -522,9 +522,9 @@ resource "aws_athena_workgroup" "workgroup" {
 # -----------------------------------------------------------------------------------------
 module "timestream" {
   source                 = "./modules/timestream"
-  db_instance_type       = "t3.medium"
+  db_instance_type       = "db.influx.medium"
   allocated_storage      = "20"
-  timestream_db_name     = "iot_timestream_db"
+  timestream_db_name     = "iot-timestream-db"
   port                   = 8086
   timestream_db_username = tostring(data.vault_generic_secret.timestream.data["username"])
   timestream_db_password = tostring(data.vault_generic_secret.timestream.data["password"])

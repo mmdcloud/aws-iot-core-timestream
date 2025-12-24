@@ -45,7 +45,7 @@ variable "organization" {
 
 variable "port" {
   type    = number
-  default = ""
+  default = 0
 }
 
 variable "publicly_accessible" {
