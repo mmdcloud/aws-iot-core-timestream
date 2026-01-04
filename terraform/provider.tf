@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -17,3 +21,5 @@ provider "aws" {
 }
 
 provider "random" {}
+
+provider "vault" {}

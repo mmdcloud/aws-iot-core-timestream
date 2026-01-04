@@ -136,10 +136,10 @@ data "aws_ami" "ubuntu" {
 # EC2 IAM Instance Profile
 module "instance_profile_iam_role" {
   source             = "./modules/iam"
-  role_name          = "transform-function-iam-role"
-  role_description   = "IAM role for transform lambda function"
-  policy_name        = "transform-function-iam-policy"
-  policy_description = "IAM policy for transform lambda function"
+  role_name          = "instance-profile-iam-role"
+  role_description   = "IAM role for instance profile"
+  policy_name        = "instance-profile-iam-policy"
+  policy_description = "IAM policy for instance profile"
   assume_role_policy = <<EOF
     {
         "Version": "2012-10-17",
