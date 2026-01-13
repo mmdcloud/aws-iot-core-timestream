@@ -43,8 +43,8 @@ module "vpc" {
   enable_dns_support      = true
   create_igw              = true
   map_public_ip_on_launch = true
-  enable_nat_gateway      = false
-  single_nat_gateway      = false
+  enable_nat_gateway      = true
+  single_nat_gateway      = true
   one_nat_gateway_per_az  = false
   tags = {
     Project = "iot"
@@ -84,7 +84,7 @@ module "iot_instance_security_group" {
     }
   ]
   tags = {
-    Name = "security-group"
+    Name = "iot-instance-security-group"
   }
 }
 
@@ -94,12 +94,12 @@ module "influxdb_security_group" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description     = "InfluxDB Traffic"
+      description     = "InfluxDB Traffic from VPC"
       from_port       = 8086
       to_port         = 8086
       protocol        = "tcp"
       security_groups = []
-      cidr_blocks     = ["0.0.0.0/0"]
+      cidr_blocks     = ["10.0.0.0/16"]
     }
   ]
   egress_rules = [
@@ -112,8 +112,29 @@ module "influxdb_security_group" {
     }
   ]
   tags = {
-    Name = "security-group"
+    Name = "influxdb-security-group"
   }
+}
+
+# -----------------------------------------------------------------------------------------
+# SSH Key Pair
+# -----------------------------------------------------------------------------------------
+# FIXED: Create SSH key pair
+resource "tls_private_key" "ssh_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "ec2_key" {
+  key_name   = "iot-instance-key-${random_id.id.hex}"
+  public_key = tls_private_key.ssh_key.public_key_openssh
+}
+
+# FIXED: Save private key locally for SSH access
+resource "local_file" "private_key" {
+  content         = tls_private_key.ssh_key.private_key_pem
+  filename        = "${path.module}/iot-instance-key.pem"
+  file_permission = "0600"
 }
 
 # -----------------------------------------------------------------------------------------
@@ -121,7 +142,7 @@ module "influxdb_security_group" {
 # -----------------------------------------------------------------------------------------
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["099720109477"]
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*"]
@@ -207,6 +228,12 @@ module "destination_bucket" {
       allowed_methods = ["GET"]
       allowed_origins = ["*"]
       max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
     }
   ]
   versioning_enabled = "Enabled"
@@ -224,6 +251,12 @@ module "athena_temp_results_bucket" {
       allowed_methods = ["GET"]
       allowed_origins = ["*"]
       max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
     }
   ]
   versioning_enabled = "Enabled"
@@ -231,14 +264,25 @@ module "athena_temp_results_bucket" {
 }
 
 module "transform_function_code" {
-  source        = "./modules/s3"
-  bucket_name   = "transform-function-code-bucket-${random_id.id.hex}"
-  objects       = []
+  source      = "./modules/s3"
+  bucket_name = "transform-function-code-bucket-${random_id.id.hex}"
+  objects = [
+    {
+      key    = "transform.zip"
+      source = "./files/transform.zip"
+    }
+  ]
   bucket_policy = ""
   cors = [
     {
       allowed_headers = ["*"]
       allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
       allowed_origins = ["*"]
       max_age_seconds = 3000
     }
@@ -304,9 +348,25 @@ module "lambda_function_iam_role" {
                   "kinesis:GetShardIterator",
                   "kinesis:DescribeStream",
                   "kinesis:DescribeStreamSummary",
-                  "kinesis:ListShards"
+                  "kinesis:ListShards",
+                  "kinesis:ListStreams"
                 ],
                 "Resource": "${module.kinesis_stream.arn}",
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
+                  "timestream:WriteRecords",
+                  "timestream:DescribeEndpoints"
+                ],
+                "Resource": "${module.kinesis_stream.arn}",
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
+                   "timestream:DescribeEndpoints"
+                ],
+                "Resource": "*",
                 "Effect": "Allow"
             }
         ]
@@ -320,12 +380,14 @@ module "transform_function" {
   role_arn                = module.lambda_function_iam_role.arn
   permissions             = []
   env_variables           = {}
-  handler                 = "lambda.lambda_handler"
+  handler                 = "transform.lambda_handler"
   runtime                 = "python3.12"
   s3_bucket               = module.transform_function_code.bucket
-  s3_key                  = "lambda.zip"
+  s3_key                  = "transform.zip"
   layers                  = []
   code_signing_config_arn = ""
+
+  depends_on = [module.transform_function_code]
 }
 
 resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
@@ -335,7 +397,49 @@ resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
   batch_size                         = 100
   maximum_batching_window_in_seconds = 5
   parallelization_factor             = 1
-  enabled                            = true
+  maximum_retry_attempts             = 3
+  maximum_record_age_in_seconds      = 604800
+  bisect_batch_on_function_error     = true
+  destination_config {
+    on_failure {
+      destination_arn = module.transform_lambda_dlq.arn
+    }
+  }
+  enabled    = true
+  depends_on = [module.transform_function]
+}
+
+# -----------------------------------------------------------------------------------------
+# Lambda Configuration
+# -----------------------------------------------------------------------------------------
+module "transform_lambda_dlq" {
+  source                     = "./modules/sqs"
+  queue_name                 = "transform-lambda-dlq"
+  delay_seconds              = 0
+  maxReceiveCount            = 3
+  max_message_size           = 262144
+  message_retention_seconds  = 345600
+  visibility_timeout_seconds = 180
+  receive_wait_time_seconds  = 20
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "lambda.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = "arn:aws:sqs:${var.region}:*:transform-lambda-dlq"
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = module.transform_function.arn
+          }
+        }
+      }
+    ]
+  })
+  tags = {
+    Project = "iot"
+  }
 }
 
 # -----------------------------------------------------------------------------------------
@@ -499,6 +603,9 @@ resource "aws_glue_crawler" "crawler" {
   s3_target {
     path = "s3://${module.destination_bucket.bucket}"
   }
+
+  # FIXED: Add schedule to run crawler daily
+  schedule = "cron(0 1 * * ? *)" # Runs at 1 AM UTC daily
 }
 
 # -----------------------------------------------------------------------------------------
@@ -518,13 +625,13 @@ resource "aws_athena_workgroup" "workgroup" {
 }
 
 # -----------------------------------------------------------------------------------------
-# Timestream Configuration
+# Timestream Configuration (InfluxDB)
 # -----------------------------------------------------------------------------------------
-module "timestream" {
-  source                 = "./modules/timestream"
+module "influxdb" {
+  source                 = "./modules/timestream" # Note: Module name suggests it handles InfluxDB
   db_instance_type       = "db.influx.medium"
   allocated_storage      = "20"
-  timestream_db_name     = "iot-timestream-db"
+  timestream_db_name     = "iot-influxdb"
   port                   = 8086
   timestream_db_username = tostring(data.vault_generic_secret.timestream.data["username"])
   timestream_db_password = tostring(data.vault_generic_secret.timestream.data["password"])
@@ -536,5 +643,79 @@ module "timestream" {
   tags = {
     Project     = "iot"
     Environment = "production"
+  }
+}
+
+# -----------------------------------------------------------------------------------------
+# Cloudwath Alarm Configuration
+# -----------------------------------------------------------------------------------------
+module "alarm_notifications" {
+  source     = "./modules/sns"
+  topic_name = "iot-cloudwatch-alarm-notifications"
+  subscriptions = [
+    {
+      protocol = "email"
+      endpoint = "madmaxcloudonline@gmail.com"
+    }
+  ]
+}
+
+# -----------------------------------------------------------------------------------------
+# CloudWatch Alarms for Monitoring
+# -----------------------------------------------------------------------------------------
+module "lambda_errors" {
+  source              = "./modules/cloudwatch/cloudwatch-alarm"
+  alarm_name          = "kinesis-to-timestream-lambda-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "10"
+  alarm_description   = "Alert when Lambda function has more than 10 errors in 5 minutes"
+  treat_missing_data  = "notBreaching"
+  ok_actions          = [module.alarm_notifications.topic_arn]
+  alarm_actions       = [module.alarm_notifications.topic_arn]
+  dimensions = {
+    FunctionName = module.transform_function.function_name
+  }
+}
+
+module "lambda_throttles" {
+  source              = "./modules/cloudwatch/cloudwatch-alarm"
+  alarm_name          = "kinesis-to-timestream-lambda-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "5"
+  alarm_description   = "Alert when Lambda function is throttled"
+  treat_missing_data  = "notBreaching"
+  ok_actions          = [module.alarm_notifications.topic_arn]
+  alarm_actions       = [module.alarm_notifications.topic_arn]
+  dimensions = {
+    FunctionName = module.transform_function.function_name
+  }
+}
+
+module "dlq_messages" {
+  source              = "./modules/cloudwatch/cloudwatch-alarm"
+  alarm_name          = "kinesis-to-timestream-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "1"
+  alarm_description   = "Alert when messages appear in DLQ"
+  treat_missing_data  = "notBreaching"
+  ok_actions          = [module.alarm_notifications.topic_arn]
+  alarm_actions       = [module.alarm_notifications.topic_arn]
+  dimensions = {
+    QueueName = module.transform_lambda_dlq.name
   }
 }
