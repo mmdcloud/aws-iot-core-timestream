@@ -119,7 +119,6 @@ module "influxdb_security_group" {
 # -----------------------------------------------------------------------------------------
 # SSH Key Pair
 # -----------------------------------------------------------------------------------------
-# FIXED: Create SSH key pair
 resource "tls_private_key" "ssh_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -202,7 +201,7 @@ module "iot_instance" {
   name                        = "iot-instance"
   ami_id                      = data.aws_ami.ubuntu.id
   instance_type               = "t2.micro"
-  key_name                    = "madmaxkeypair"
+  key_name                    = aws_key_pair.ec2_key.key_name
   associate_public_ip_address = true
   user_data = base64encode(templatefile("${path.module}/scripts/user_data.sh", {
     ENDPOINT    = "${data.aws_iot_endpoint.iot.endpoint_address}"
@@ -359,7 +358,7 @@ module "lambda_function_iam_role" {
                   "timestream:WriteRecords",
                   "timestream:DescribeEndpoints"
                 ],
-                "Resource": "${module.kinesis_stream.arn}",
+                "Resource": "arn:aws:timestream:${var.region}:*:database/*/table/*",
                 "Effect": "Allow"
             },
             {
@@ -531,7 +530,12 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   enabled     = true
   sql         = "SELECT * FROM 'topic/mqtt'"
   sql_version = "2016-03-23"
-
+  error_action {
+    cloudwatch_logs {
+      log_group_name = aws_cloudwatch_log_group.iot_errors.name
+      role_arn       = module.iot_error_logging_role.arn
+    }
+  }
   kinesis {
     stream_name   = module.kinesis_stream.name
     partition_key = "deviceId"
@@ -604,8 +608,7 @@ resource "aws_glue_crawler" "crawler" {
     path = "s3://${module.destination_bucket.bucket}"
   }
 
-  # FIXED: Add schedule to run crawler daily
-  schedule = "cron(0 1 * * ? *)" # Runs at 1 AM UTC daily
+  schedule = "cron(0 1 * * ? *)"
 }
 
 # -----------------------------------------------------------------------------------------
@@ -628,7 +631,7 @@ resource "aws_athena_workgroup" "workgroup" {
 # Timestream Configuration (InfluxDB)
 # -----------------------------------------------------------------------------------------
 module "influxdb" {
-  source                 = "./modules/timestream" # Note: Module name suggests it handles InfluxDB
+  source                 = "./modules/timestream"
   db_instance_type       = "db.influx.medium"
   allocated_storage      = "20"
   timestream_db_name     = "iot-influxdb"
