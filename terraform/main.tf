@@ -367,6 +367,13 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": "*",
                 "Effect": "Allow"
+            },
+            {
+             "Action": [
+                "sqs:SendMessage"
+              ],
+              "Resource": "${module.transform_lambda_dlq.arn}",
+              "Effect": "Allow"
             }
         ]
     }
@@ -523,6 +530,55 @@ module "iot_kinesis_role" {
     EOF
 }
 
+module "iot_errors_log_group" {
+  source            = "./modules/cloudwatch/cloudwatch-log-group"
+  log_group_name    = "/aws/iot/rule/iot_to_kinesis_rule/errors"
+  retention_in_days = 7
+  skip_destroy      = false
+}
+
+module "iot_error_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "iot-error-iam-role"
+  role_description   = "IAM role for IoT error logging"
+  policy_name        = "iot-error-iam-policy"
+  policy_description = "IAM policy for IoT error logging"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "iot.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "logs:CreateLogStream",
+                  "logs:DescribeLogStreams",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": [
+                  "${module.iot_errors_log_group.arn}",
+                  "${module.iot_errors_log_group.arn}:*"
+                ],
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
+}
+
 # AWS IoT Topic Rule that sends data from a topic to Kinesis Data Stream
 resource "aws_iot_topic_rule" "kinesis_rule" {
   name        = "iot_to_kinesis_rule"
@@ -532,8 +588,8 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   sql_version = "2016-03-23"
   error_action {
     cloudwatch_logs {
-      log_group_name = aws_cloudwatch_log_group.iot_errors.name
-      role_arn       = module.iot_error_logging_role.arn
+      log_group_name = module.iot_errors_log_group.name
+      role_arn       = module.iot_error_iam_role.arn
     }
   }
   kinesis {
