@@ -22,7 +22,7 @@ resource "tls_private_key" "device_key" {
 resource "tls_self_signed_cert" "device_cert" {
   private_key_pem       = tls_private_key.device_key.private_key_pem
   validity_period_hours = 8760
-  allowed_uses          = ["key_encipherment", "digital_signature", "server_auth"]
+  allowed_uses          = ["key_encipherment", "digital_signature", "client_auth"]
   subject {
     common_name  = "iot-device"
     organization = "iot-org"
@@ -381,11 +381,14 @@ module "lambda_function_iam_role" {
 }
 
 module "transform_function" {
-  source                  = "./modules/lambda"
-  function_name           = "transform-function"
-  role_arn                = module.lambda_function_iam_role.arn
-  permissions             = []
-  env_variables           = {}
+  source        = "./modules/lambda"
+  function_name = "transform-function"
+  role_arn      = module.lambda_function_iam_role.arn
+  permissions   = []
+  env_variables = {
+    TIMESTREAM_DATABASE = "iot-influxdb"
+    TIMESTREAM_TABLE    = "iot-data"
+  }
   handler                 = "transform.lambda_handler"
   runtime                 = "python3.12"
   s3_bucket               = module.transform_function_code.bucket
@@ -474,9 +477,14 @@ resource "aws_iot_policy" "pubsub" {
   })
 }
 
+# resource "aws_iot_certificate" "cert" {
+#   certificate_pem = tls_self_signed_cert.device_cert.cert_pem
+#   active          = true
+# }
+
 resource "aws_iot_certificate" "cert" {
-  certificate_pem = tls_self_signed_cert.device_cert.cert_pem
-  active          = true
+  active = true
+  # AWS auto-generates the cert/key — retrieve via outputs
 }
 
 resource "aws_iot_thing_principal_attachment" "attach" {

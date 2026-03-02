@@ -1,45 +1,71 @@
 #!/usr/bin/env python3
+"""
+MQTT Publisher for AWS IoT Core
+Publishes simulated IoT sensor data every 5 seconds.
+"""
 from dotenv import load_dotenv
 import os
 import json
 import time
+import logging
 from awscrt import io, mqtt
 from awsiot import mqtt_connection_builder
 
 load_dotenv('/home/ubuntu/.env')
 
-# Configuration - Replace these with your values
-ENDPOINT =  os.getenv('ENDPOINT')
-CLIENT_ID = "python-publisher"
-TOPIC = "topic/mqtt"                          
-PATH_TO_CERT = "/etc/aws-iot/device-cert.pem"
-PATH_TO_KEY =  "/etc/aws-iot/private-key.pem"
-PATH_TO_ROOT = "/etc/aws-iot/AmazonRootCA1.pem"
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
-# Message data
-MESSAGE = {
-    "deviceId": CLIENT_ID,
-    "timestamp": int(time.time()),
-    "temperature": 25.4,
-    "humidity": 60.2,
-    "status": "normal"
-}
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+ENDPOINT       = os.getenv('ENDPOINT')
+CLIENT_ID      = os.getenv('CLIENT_ID', 'python-publisher')
+TOPIC          = os.getenv('TOPIC', 'topic/mqtt')
+PATH_TO_CERT   = os.getenv('PATH_TO_CERT',   '/etc/aws-iot/device-cert.pem')
+PATH_TO_KEY    = os.getenv('PATH_TO_KEY',    '/etc/aws-iot/private-key.pem')
+PATH_TO_ROOT   = os.getenv('PATH_TO_ROOT',   '/etc/aws-iot/AmazonRootCA1.pem')
+PUBLISH_INTERVAL = int(os.getenv('PUBLISH_INTERVAL', '5'))
 
-# Callback when connection is accidentally lost
+if not ENDPOINT:
+    raise EnvironmentError("ENDPOINT environment variable is not set.")
+
+
+# ---------------------------------------------------------------------------
+# MQTT callbacks
+# ---------------------------------------------------------------------------
 def on_connection_interrupted(connection, error, **kwargs):
-    print(f"Connection interrupted. Error: {error}")
+    logger.warning(f"Connection interrupted: {error}")
 
-# Callback when an interrupted connection is re-established
+
 def on_connection_resumed(connection, return_code, session_present, **kwargs):
-    print(f"Connection resumed. Return code: {return_code} Session present: {session_present}")
+    logger.info(f"Connection resumed. return_code={return_code} session_present={session_present}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def build_message(count: int) -> dict:
+    """Build a sensor payload. Timestamp is Unix epoch in MILLISECONDS."""
+    return {
+        "deviceId":      CLIENT_ID,
+        "location":      "warehouse-a",
+        # FIX: send milliseconds so transform.py round-trips cleanly
+        "timestamp":     int(time.time() * 1000),
+        "temperature":   round(20.0 + (count % 20) * 0.5, 2),   # simulated ramp
+        "humidity":      round(55.0 + (count % 10) * 0.3, 2),
+        "pressure":      round(1013.0 + (count % 5) * 0.1, 2),
+        "message_count": count,
+        "status":        "normal",
+    }
+
 
 def main():
-    # Spin up resources
+    # Build MQTT connection
     event_loop_group = io.EventLoopGroup(1)
-    host_resolver = io.DefaultHostResolver(event_loop_group)
+    host_resolver    = io.DefaultHostResolver(event_loop_group)
     client_bootstrap = io.ClientBootstrap(event_loop_group, host_resolver)
 
-    # Create MQTT connection
     mqtt_connection = mqtt_connection_builder.mtls_from_path(
         endpoint=ENDPOINT,
         cert_filepath=PATH_TO_CERT,
@@ -50,46 +76,38 @@ def main():
         clean_session=False,
         keep_alive_secs=30,
         on_connection_interrupted=on_connection_interrupted,
-        on_connection_resumed=on_connection_resumed
+        on_connection_resumed=on_connection_resumed,
     )
 
-    print(f"Connecting to {ENDPOINT} with client ID '{CLIENT_ID}'...")
-    
-    # Make the connect() call
-    connect_future = mqtt_connection.connect()
-    connect_future.result()  # Wait for connection to complete
-    print("Connected!")
+    logger.info(f"Connecting to {ENDPOINT} as '{CLIENT_ID}' …")
+    mqtt_connection.connect().result()
+    logger.info("Connected!")
 
+    count = 0
     try:
-        # Publish messages in a loop
-        message_count = 0
         while True:
-            # Update message with current timestamp and increment counter
-            MESSAGE["timestamp"] = int(time.time())
-            MESSAGE["message_count"] = message_count
-            
-            # Convert message to JSON
-            message_json = json.dumps(MESSAGE)
-            
-            print(f"Publishing message to topic '{TOPIC}': {message_json}")
-            
-            # Publish message
-            mqtt_connection.publish(
+            payload = build_message(count)
+            message_json = json.dumps(payload)
+
+            logger.info(f"Publishing #{count} → {TOPIC}: {message_json}")
+
+            publish_future, _ = mqtt_connection.publish(
                 topic=TOPIC,
                 payload=message_json,
-                qos=mqtt.QoS.AT_LEAST_ONCE
+                qos=mqtt.QoS.AT_LEAST_ONCE,
             )
-            
-            message_count += 1
-            time.sleep(5)  # Wait 5 seconds between messages
-            
+            publish_future.result()   # block until broker ACKs
+            count += 1
+            time.sleep(PUBLISH_INTERVAL)
+
     except KeyboardInterrupt:
-        print("Keyboard interrupt detected. Disconnecting...")
+        logger.info("Keyboard interrupt — disconnecting …")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
     finally:
-        # Disconnect
-        disconnect_future = mqtt_connection.disconnect()
-        disconnect_future.result()
-        print("Disconnected!")
+        mqtt_connection.disconnect().result()
+        logger.info("Disconnected.")
+
 
 if __name__ == "__main__":
     main()
