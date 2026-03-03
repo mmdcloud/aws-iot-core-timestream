@@ -204,10 +204,11 @@ module "iot_instance" {
   key_name                    = aws_key_pair.ec2_key.key_name
   associate_public_ip_address = true
   user_data = base64encode(templatefile("${path.module}/scripts/user_data.sh", {
-    ENDPOINT    = "${data.aws_iot_endpoint.iot.endpoint_address}"
-    DEVICE_CERT = "${aws_iot_certificate.cert.certificate_pem}"
-    PRIVATE_KEY = "${tls_private_key.device_key.private_key_pem}"
-  }))
+  ENDPOINT    = data.aws_iot_endpoint.iot.endpoint_address
+  DEVICE_CERT = aws_iot_certificate.cert.certificate_pem
+  PRIVATE_KEY = aws_iot_certificate.cert.private_key
+  MQTT_SCRIPT = file("${path.module}/../src/mqtt_publish.py")
+}))
   instance_profile = aws_iam_instance_profile.iam_instance_profile.name
   subnet_id        = module.vpc.public_subnets[0]
   security_groups  = [module.iot_instance_security_group.id]
