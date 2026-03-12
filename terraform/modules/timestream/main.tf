@@ -1,4 +1,4 @@
-resource "aws_timestreaminfluxdb_db_instance" "name" {
+resource "aws_timestreaminfluxdb_db_instance" "instance" {
   publicly_accessible    = var.publicly_accessible
   db_instance_type       = var.db_instance_type
   allocated_storage      = var.allocated_storage
@@ -11,4 +11,16 @@ resource "aws_timestreaminfluxdb_db_instance" "name" {
   organization           = var.organization
   port = var.port
   tags                   = var.tags
+}
+
+resource "aws_timestreamwrite_table" "iot_data" {
+  database_name = aws_timestreaminfluxdb_db_instance.instance.name
+  table_name    = "iot-data"
+   
+  retention_properties {
+    magnetic_store_retention_period_in_days = 365
+    memory_store_retention_period_in_hours  = 24
+  }
+
+  depends_on = [aws_timestreaminfluxdb_db_instance.instance]
 }

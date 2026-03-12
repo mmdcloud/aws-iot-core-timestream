@@ -14,20 +14,20 @@ data "aws_iot_endpoint" "iot" {}
 # -----------------------------------------------------------------------------------------
 # Certificate Configuration
 # -----------------------------------------------------------------------------------------
-resource "tls_private_key" "device_key" {
-  algorithm = "RSA"
-  rsa_bits  = 2048
-}
+# resource "tls_private_key" "device_key" {
+#   algorithm = "RSA"
+#   rsa_bits  = 2048
+# }
 
-resource "tls_self_signed_cert" "device_cert" {
-  private_key_pem       = tls_private_key.device_key.private_key_pem
-  validity_period_hours = 8760
-  allowed_uses          = ["key_encipherment", "digital_signature", "client_auth"]
-  subject {
-    common_name  = "iot-device"
-    organization = "iot-org"
-  }
-}
+# resource "tls_self_signed_cert" "device_cert" {
+#   private_key_pem       = tls_private_key.device_key.private_key_pem
+#   validity_period_hours = 8760
+#   allowed_uses          = ["key_encipherment", "digital_signature", "client_auth"]
+#   subject {
+#     common_name  = "iot-device"
+#     organization = "iot-org"
+#   }
+# }
 
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
@@ -65,14 +65,14 @@ module "iot_instance_security_group" {
       security_groups = []
       cidr_blocks     = ["0.0.0.0/0"]
     },
-    {
-      description     = "SSH Traffic"
-      from_port       = 22
-      to_port         = 22
-      protocol        = "tcp"
-      security_groups = []
-      cidr_blocks     = ["0.0.0.0/0"]
-    }
+    # {
+    #   description     = "SSH Traffic"
+    #   from_port       = 22
+    #   to_port         = 22
+    #   protocol        = "tcp"
+    #   security_groups = []
+    #   cidr_blocks     = ["0.0.0.0/0"]
+    # }
   ]
   egress_rules = [
     {
@@ -204,11 +204,14 @@ module "iot_instance" {
   key_name                    = aws_key_pair.ec2_key.key_name
   associate_public_ip_address = true
   user_data = base64encode(templatefile("${path.module}/scripts/user_data.sh", {
-  ENDPOINT    = data.aws_iot_endpoint.iot.endpoint_address
-  DEVICE_CERT = aws_iot_certificate.cert.certificate_pem
-  PRIVATE_KEY = aws_iot_certificate.cert.private_key
-  MQTT_SCRIPT = file("${path.module}/../src/mqtt_publish.py")
-}))
+    ENDPOINT    = data.aws_iot_endpoint.iot.endpoint_address
+    DEVICE_CERT = aws_iot_certificate.cert.certificate_pem
+    PRIVATE_KEY = aws_iot_certificate.cert.private_key
+    MQTT_SCRIPT = replace(
+      file("${path.module}/../src/mqtt_publish.py"),
+      "$", "$$"
+    )
+  }))
   instance_profile = aws_iam_instance_profile.iam_instance_profile.name
   subnet_id        = module.vpc.public_subnets[0]
   security_groups  = [module.iot_instance_security_group.id]
@@ -439,11 +442,6 @@ module "transform_lambda_dlq" {
         Principal = { Service = "lambda.amazonaws.com" }
         Action    = "sqs:SendMessage"
         Resource  = "arn:aws:sqs:${var.region}:*:transform-lambda-dlq"
-        Condition = {
-          ArnEquals = {
-            "aws:SourceArn" = module.transform_function.arn
-          }
-        }
       }
     ]
   })

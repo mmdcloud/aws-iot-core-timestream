@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ENDPOINT       = os.getenv('ENDPOINT')
 CLIENT_ID      = os.getenv('CLIENT_ID', 'python-publisher')
-TOPIC          = os.getenv('TOPIC', 'topic/mqtt')
+TOPIC          = os.getenv('TOPIC', f'devices/{os.getenv("CLIENT_ID", "python-publisher")}/telemetry')
 PATH_TO_CERT   = os.getenv('PATH_TO_CERT',   '/etc/aws-iot/device-cert.pem')
 PATH_TO_KEY    = os.getenv('PATH_TO_KEY',    '/etc/aws-iot/private-key.pem')
 PATH_TO_ROOT   = os.getenv('PATH_TO_ROOT',   '/etc/aws-iot/AmazonRootCA1.pem')

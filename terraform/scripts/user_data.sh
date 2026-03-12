@@ -7,11 +7,11 @@ set -euxo pipefail
 mkdir -p /etc/aws-iot
 chmod 755 /etc/aws-iot
 
-cat <<'FILE' > /etc/aws-iot/device-cert.pem
+cat <<FILE > /etc/aws-iot/device-cert.pem
 ${DEVICE_CERT}
 FILE
 
-cat <<'FILE' > /etc/aws-iot/private-key.pem
+cat <<FILE > /etc/aws-iot/private-key.pem
 ${PRIVATE_KEY}
 FILE
 
@@ -57,7 +57,7 @@ chmod 600 /home/ubuntu/.env
 # 5. Deploy mqtt_publish.py
 # ---------------------------------------------------------------------------
 mkdir -p /opt/iot-publisher
-cat <<'PYEOF' > /opt/iot-publisher/mqtt_publish.py
+cat <<PYEOF > /opt/iot-publisher/mqtt_publish.py
 ${MQTT_SCRIPT}
 PYEOF
 
