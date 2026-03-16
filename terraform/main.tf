@@ -12,24 +12,6 @@ resource "random_id" "id" {
 data "aws_iot_endpoint" "iot" {}
 
 # -----------------------------------------------------------------------------------------
-# Certificate Configuration
-# -----------------------------------------------------------------------------------------
-# resource "tls_private_key" "device_key" {
-#   algorithm = "RSA"
-#   rsa_bits  = 2048
-# }
-
-# resource "tls_self_signed_cert" "device_cert" {
-#   private_key_pem       = tls_private_key.device_key.private_key_pem
-#   validity_period_hours = 8760
-#   allowed_uses          = ["key_encipherment", "digital_signature", "client_auth"]
-#   subject {
-#     common_name  = "iot-device"
-#     organization = "iot-org"
-#   }
-# }
-
-# -----------------------------------------------------------------------------------------
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
 module "vpc" {
@@ -56,7 +38,7 @@ module "iot_instance_security_group" {
   source        = "./modules/security-groups"
   name          = "iot-instance-security-group"
   vpc_id        = module.vpc.vpc_id
-  ingress_rules = []    # no inbound needed — device is outbound only
+  ingress_rules = []
   egress_rules = [
     {
       description = "MQTT to IoT Core"
@@ -107,70 +89,67 @@ module "influxdb_security_group" {
 # -----------------------------------------------------------------------------------------
 # VPC Flow Logs Configuration
 # -----------------------------------------------------------------------------------------
+module "vpc_flow_logs_role" {
+  source             = "./modules/iam"
+  role_name          = "vpc-flow-logs-role"
+  role_description   = "IAM role for VPC Flow Logs"
+  policy_name        = "vpc-flow-logs-policy"
+  policy_description = "IAM policy for VPC Flow Logs"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "vpc-flow-logs.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Action": [
+                          "logs:CreateLogStream",
+                          "logs:PutLogEvents",
+                          "logs:DescribeLogGroups",
+                          "logs:DescribeLogStreams"
+                        ],
+                        "Resource": [
+                          "${aws_cloudwatch_log_group.vpc_flow_logs.arn},
+                          "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
+                        ],
+                        "Effect": "Allow"
+                    }
+                ]
+            }
+        ]
+    }
+    EOF
+}
 
-resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
-  name              = "/aws/vpc/flow-logs/iot"
+module "vpc_flow_log_group" {
+  source            = "./modules/cloudwatch/cloudwatch-log-group"
+  log_group_name    = "/aws/vpc/flow-logs/iot"
+  skip_destroy      = false
   retention_in_days = 90
 }
 
 resource "aws_flow_log" "iot_vpc_flow_log" {
-  iam_role_arn    = aws_iam_role.vpc_flow_logs_role.arn
-  log_destination = aws_cloudwatch_log_group.vpc_flow_logs.arn
+  iam_role_arn    = module.vpc_flow_logs_role.arn
+  log_destination = module.vpc_flow_log_group.arn
   traffic_type    = "ALL"
   vpc_id          = module.vpc.vpc_id
 }
-
-resource "aws_iam_role" "vpc_flow_logs_role" {
-  name = "vpc-flow-logs-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "vpc-flow-logs.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "vpc_flow_logs_policy" {
-  role = aws_iam_role.vpc_flow_logs_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams"
-      ]
-      Resource = [
-        aws_cloudwatch_log_group.vpc_flow_logs.arn,
-        "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
-      ]
-    }]
-  })
-}
-
-# -----------------------------------------------------------------------------------------
-# SSH Key Pair
-# -----------------------------------------------------------------------------------------
-# resource "tls_private_key" "ssh_key" {
-#   algorithm = "RSA"
-#   rsa_bits  = 4096
-# }
-
-# resource "aws_key_pair" "ec2_key" {
-#   key_name   = "iot-instance-key-${random_id.id.hex}"
-#   public_key = tls_private_key.ssh_key.public_key_openssh
-# }
-
-# # FIXED: Save private key locally for SSH access
-# resource "local_file" "private_key" {
-#   content         = tls_private_key.ssh_key.private_key_pem
-#   filename        = "${path.module}/iot-instance-key.pem"
-#   file_permission = "0600"
-# }
 
 # -----------------------------------------------------------------------------------------
 # IOT Device Simulated Instance
@@ -279,7 +258,7 @@ module "destination_bucket" {
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:*"
-        Resource  = [
+        Resource = [
           "arn:aws:s3:::destination-bucket-${random_id.id.hex}",
           "arn:aws:s3:::destination-bucket-${random_id.id.hex}/*"
         ]
@@ -293,12 +272,12 @@ module "destination_bucket" {
     {
       allowed_headers = ["*"]
       allowed_methods = ["GET"]
-      allowed_origins = ["https://*.amazonaws.com"]  # scoped
+      allowed_origins = ["https://*.amazonaws.com"] # scoped
       max_age_seconds = 3000
     }
   ]
   versioning_enabled = "Enabled"
-  force_destroy      = false   # protect your IoT data
+  force_destroy      = false # protect your IoT data
 }
 
 module "athena_temp_results_bucket" {
@@ -376,12 +355,12 @@ module "kinesis_stream" {
   shard_level_metrics = [
     "IncomingBytes",
     "OutgoingBytes",
-    "IncomingRecords",      # add — tracks message volume
-    "IteratorAgeMilliseconds"  # add — detects consumer lag
+    "IncomingRecords",        
+    "IteratorAgeMilliseconds"
   ]
-  stream_mode        = "ON_DEMAND"
-  encryption_type    = "KMS"           # add
-  kms_key_id         = aws_kms_key.iot_kms.key_id  # add
+  stream_mode     = "ON_DEMAND"
+  encryption_type = "KMS"                      # add
+  kms_key_id      = aws_kms_key.iot_kms.key_id # add
 }
 
 # -----------------------------------------------------------------------------------------
@@ -521,7 +500,7 @@ module "transform_lambda_dlq" {
         Effect    = "Allow"
         Principal = { Service = "lambda.amazonaws.com" }
         Action    = "sqs:SendMessage"
-        Resource  = module.transform_lambda_dlq.arn   # use the actual ARN with account ID
+        Resource  = module.transform_lambda_dlq.arn # use the actual ARN with account ID
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = module.transform_function.arn
@@ -565,11 +544,6 @@ resource "aws_iot_policy" "pubsub" {
     ]
   })
 }
-
-# resource "aws_iot_certificate" "cert" {
-#   certificate_pem = tls_self_signed_cert.device_cert.cert_pem
-#   active          = true
-# }
 
 resource "aws_iot_certificate" "cert" {
   active = true

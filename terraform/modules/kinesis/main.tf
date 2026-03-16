@@ -6,6 +6,8 @@ resource "aws_kinesis_stream" "stream" {
   stream_mode_details {
     stream_mode = var.stream_mode
   }
+  encryption_type = var.encryption_type
+  kms_key_id = var.encryption_type == "KMS" ? var.kms_key_id : null
   tags = {
     Name = var.name
   }
