@@ -1,7 +1,10 @@
 variable "name" {}
 variable "ami_id" {}
 variable "instance_type" {}
-variable "key_name" {}
+variable "key_name" {
+    type = string
+    default = null
+}
 variable "associate_public_ip_address" {}
 variable "user_data" {}
 variable "subnet_id" {}

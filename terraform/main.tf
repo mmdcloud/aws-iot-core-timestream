@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 # -----------------------------------------------------------------------------------------
 # Registering vault provider
 # -----------------------------------------------------------------------------------------
@@ -114,24 +116,19 @@ module "vpc_flow_logs_role" {
     {
         "Version": "2012-10-17",
         "Statement": [
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                          "logs:CreateLogStream",
-                          "logs:PutLogEvents",
-                          "logs:DescribeLogGroups",
-                          "logs:DescribeLogStreams"
-                        ],
-                        "Resource": [
-                          "${aws_cloudwatch_log_group.vpc_flow_logs.arn},
-                          "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
-                        ],
-                        "Effect": "Allow"
-                    }
-                ]
-            }
+          {
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource": [
+                "${module.vpc_flow_logs.arn},
+                "${module.vpc_flow_logs.arn}:*"
+              ],
+              "Effect": "Allow"
+          }            
         ]
     }
     EOF
@@ -227,7 +224,6 @@ module "iot_instance" {
   name                        = "iot-instance"
   ami_id                      = data.aws_ami.ubuntu.id
   instance_type               = "t3.small"
-  key_name                    = aws_key_pair.ec2_key.key_name
   associate_public_ip_address = false
   user_data = base64encode(templatefile("${path.module}/scripts/user_data.sh", {
     ENDPOINT    = data.aws_iot_endpoint.iot.endpoint_address
@@ -355,7 +351,7 @@ module "kinesis_stream" {
   shard_level_metrics = [
     "IncomingBytes",
     "OutgoingBytes",
-    "IncomingRecords",        
+    "IncomingRecords",
     "IteratorAgeMilliseconds"
   ]
   stream_mode     = "ON_DEMAND"
@@ -366,8 +362,10 @@ module "kinesis_stream" {
 # -----------------------------------------------------------------------------------------
 # Lambda Configuration
 # -----------------------------------------------------------------------------------------
-resource "aws_cloudwatch_log_group" "transform_function_logs" {
-  name              = "/aws/lambda/transform-function"
+module "transform_function_logs" {
+  source = "./cloudwatch/cloudwatch-log-group"
+  log_group_name              = "/aws/lambda/transform-function"
+  skip_destroy = false
   retention_in_days = 30
 }
 
@@ -500,7 +498,7 @@ module "transform_lambda_dlq" {
         Effect    = "Allow"
         Principal = { Service = "lambda.amazonaws.com" }
         Action    = "sqs:SendMessage"
-        Resource  = module.transform_lambda_dlq.arn # use the actual ARN with account ID
+        Resource  = module.transform_lambda_dlq.arn
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = module.transform_function.arn
