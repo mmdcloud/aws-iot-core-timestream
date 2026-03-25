@@ -36,6 +36,30 @@ module "vpc" {
 }
 
 # Security Group
+module "lambda_security_group" {
+  source        = "./modules/security-groups"
+  name          = "lambda-security-group"
+  vpc_id        = module.vpc.vpc_id
+  ingress_rules = []
+  egress_rules = [
+    {
+      description = "InfluxDB access"
+      from_port   = 8086
+      to_port     = 8086
+      protocol    = "tcp"
+      cidr_blocks = ["10.0.0.0/16"]
+    },
+    {
+      description = "HTTPS for AWS APIs"
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = { Name = "lambda-security-group" }
+}
+
 module "iot_instance_security_group" {
   source        = "./modules/security-groups"
   name          = "iot-instance-security-group"
@@ -70,8 +94,8 @@ module "influxdb_security_group" {
       from_port       = 8086
       to_port         = 8086
       protocol        = "tcp"
-      security_groups = []
-      cidr_blocks     = ["10.0.0.0/16"]
+      security_groups = [module.lambda_security_group.id]
+      cidr_blocks     = []
     }
   ]
   egress_rules = [
@@ -411,6 +435,14 @@ module "lambda_function_iam_role" {
             },
             {
                 "Action": [
+                  "kms:Decrypt",
+                  "kms:GenerateDataKey"
+                ],
+                "Resource": "${aws_kms_key.iot_kms.arn}",
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
                   "timestream:WriteRecords",
                   "timestream:DescribeEndpoints"
                 ],
@@ -430,7 +462,16 @@ module "lambda_function_iam_role" {
               ],
               "Resource": "${module.transform_lambda_dlq.arn}",
               "Effect": "Allow"
-            }
+            },
+            {
+                "Action": [
+                  "ec2:CreateNetworkInterface",
+                  "ec2:DescribeNetworkInterfaces",
+                  "ec2:DeleteNetworkInterface"
+                ],
+                "Resource": "*",
+                "Effect": "Allow"
+            },
         ]
     }
     EOF
@@ -444,12 +485,18 @@ module "transform_function" {
   env_variables = {
     TIMESTREAM_DATABASE = "iot-influxdb"
     TIMESTREAM_TABLE    = "iot-data"
+    INFLUXDB_URL      = module.influxdb.endpoint
+    INFLUXDB_TOKEN    = tostring(data.vault_generic_secret.timestream.data["token"])
+    INFLUXDB_ORG      = "iot-organization"
+    INFLUXDB_BUCKET   = "iot-data"
+    FAILURE_THRESHOLD = "0.5"
   }
   handler                 = "transform.lambda_handler"
   runtime                 = "python3.12"
   s3_bucket               = module.transform_function_code.bucket
   s3_key                  = "transform.zip"
   layers                  = []
+  vpc_subnet_ids         = module.vpc.private_subnets
   code_signing_config_arn = ""
 
   depends_on = [module.transform_function_code]
@@ -587,6 +634,14 @@ module "iot_kinesis_role" {
                 "Resource": [
                   "${module.kinesis_stream.arn}"
                 ],
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": "${aws_kms_key.iot_kms.arn}",
                 "Effect": "Allow"
             }
         ]

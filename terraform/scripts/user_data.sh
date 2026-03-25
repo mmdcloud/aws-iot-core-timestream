@@ -31,19 +31,26 @@ apt-get install -y python3-pip python3-dev python3-venv awscli jq
 
 # ---------------------------------------------------------------------------
 # 3. Python dependencies
-#    - awsiotsdk  : AWS IoT Device SDK v2 (provides awscrt + awsiot)
-#    - python-dotenv : used by mqtt_publish.py to load /home/ubuntu/.env
 # ---------------------------------------------------------------------------
 pip3 install --break-system-packages awsiotsdk python-dotenv
 
 # ---------------------------------------------------------------------------
 # 4. Write .env for mqtt_publish.py
-#    All variables that mqtt_publish.py reads via os.getenv()
+#
+# FIX 1: CLIENT_ID must match the IoT Thing name ("thing") so that the
+#         iot:Connect policy — scoped to client/thing — allows the connection.
+#         The original value "python-publisher" did not match and would have
+#         caused an immediate CONNACK rejection from IoT Core.
+#
+# FIX 2: TOPIC must match both the IoT policy resource ARN and the Topic Rule
+#         SQL filter, which are now all aligned to "topic/mqtt/thing".
+#         The original TOPIC "topic/mqtt" did not match the scoped policy ARN
+#         "topic/mqtt/thing" so every Publish would have been unauthorised.
 # ---------------------------------------------------------------------------
 cat <<EOF > /home/ubuntu/.env
 ENDPOINT=${ENDPOINT}
-CLIENT_ID=python-publisher
-TOPIC=topic/mqtt
+CLIENT_ID=thing
+TOPIC=topic/mqtt/thing
 PUBLISH_INTERVAL=5
 PATH_TO_CERT=/etc/aws-iot/device-cert.pem
 PATH_TO_KEY=/etc/aws-iot/private-key.pem
@@ -65,8 +72,7 @@ chown -R ubuntu:ubuntu /opt/iot-publisher
 chmod +x /opt/iot-publisher/mqtt_publish.py
 
 # ---------------------------------------------------------------------------
-# 6. Create systemd service so the publisher starts on boot
-#    and restarts automatically on failure
+# 6. Create systemd service
 # ---------------------------------------------------------------------------
 cat <<'SERVICE' > /etc/systemd/system/mqtt-publisher.service
 [Unit]

@@ -1,0 +1,9 @@
+# Lambda package requirements
+# Run: pip install -r requirements.txt -t ./package
+#      cp transform.py ./package/
+#      cd package && zip -r ../transform.zip . && cd ..
+
+# FIX 3: influxdb-client replaces boto3 timestream-write.
+# The managed Timestream for InfluxDB service speaks the InfluxDB v2 HTTP API,
+# not the AWS Timestream wire protocol — these are entirely different services.
+influxdb-client==1.44.0
