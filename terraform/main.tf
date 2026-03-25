@@ -124,7 +124,7 @@ module "vpc_flow_logs_role" {
                 "logs:DescribeLogStreams"
               ],
               "Resource": [
-                "${module.vpc_flow_logs.arn},
+                "${module.vpc_flow_logs.arn}",
                 "${module.vpc_flow_logs.arn}:*"
               ],
               "Effect": "Allow"
@@ -191,19 +191,14 @@ module "instance_profile_iam_role" {
     {
         "Version": "2012-10-17",
         "Statement": [
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                          "kinesis:PutRecord",
-                          "kinesis:PutRecords"
-                        ],
-                        "Resource": "${module.kinesis_stream.arn}",
-                        "Effect": "Allow"
-                    }
-                ]
-            }
+          {
+              "Action": [
+                "kinesis:PutRecord",
+                "kinesis:PutRecords"
+              ],
+              "Resource": "${module.kinesis_stream.arn}",
+              "Effect": "Allow"
+          }            
         ]
     }
     EOF
@@ -363,7 +358,7 @@ module "kinesis_stream" {
 # Lambda Configuration
 # -----------------------------------------------------------------------------------------
 module "transform_function_logs" {
-  source = "./cloudwatch/cloudwatch-log-group"
+  source = "./modules/cloudwatch/cloudwatch-log-group"
   log_group_name              = "/aws/lambda/transform-function"
   skip_destroy = false
   retention_in_days = 30
