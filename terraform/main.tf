@@ -115,6 +115,21 @@ module "influxdb_security_group" {
 # -----------------------------------------------------------------------------------------
 # VPC Flow Logs Configuration
 # -----------------------------------------------------------------------------------------
+module "flow_log_group" {
+  source            = "./modules/cloudwatch/cloudwatch-log-group"
+  log_group_name    = "/aws/vpc/flow-logs/iot-application-flow-logs"
+  skip_destroy      = false
+  retention_in_days = 365
+}
+
+# Add VPC Flow Logs for security monitoring
+resource "aws_flow_log" "vpc_flow_log" {
+  iam_role_arn    = module.vpc_flow_logs_role.arn
+  log_destination = module.flow_log_group.arn
+  traffic_type    = "ALL"
+  vpc_id          = module.vpc.vpc_id
+}
+
 module "vpc_flow_logs_role" {
   source             = "./modules/iam"
   role_name          = "vpc-flow-logs-role"
@@ -148,8 +163,8 @@ module "vpc_flow_logs_role" {
                 "logs:DescribeLogStreams"
               ],
               "Resource": [
-                "${module.vpc_flow_logs.arn}",
-                "${module.vpc_flow_logs.arn}:*"
+                "${module.flow_log_group.arn}",
+                "${module.flow_log_group.arn}:*"
               ],
               "Effect": "Allow"
           }            
@@ -382,9 +397,9 @@ module "kinesis_stream" {
 # Lambda Configuration
 # -----------------------------------------------------------------------------------------
 module "transform_function_logs" {
-  source = "./modules/cloudwatch/cloudwatch-log-group"
-  log_group_name              = "/aws/lambda/transform-function"
-  skip_destroy = false
+  source            = "./modules/cloudwatch/cloudwatch-log-group"
+  log_group_name    = "/aws/lambda/transform-function"
+  skip_destroy      = false
   retention_in_days = 30
 }
 
@@ -485,18 +500,20 @@ module "transform_function" {
   env_variables = {
     TIMESTREAM_DATABASE = "iot-influxdb"
     TIMESTREAM_TABLE    = "iot-data"
-    INFLUXDB_URL      = module.influxdb.endpoint
-    INFLUXDB_TOKEN    = tostring(data.vault_generic_secret.timestream.data["token"])
-    INFLUXDB_ORG      = "iot-organization"
-    INFLUXDB_BUCKET   = "iot-data"
-    FAILURE_THRESHOLD = "0.5"
+    INFLUXDB_URL        = module.influxdb.endpoint
+    INFLUXDB_USERNAME   = tostring(data.vault_generic_secret.timestream.data["username"])
+    INFLUXDB_PASSWORD   = tostring(data.vault_generic_secret.timestream.data["password"])
+    INFLUXDB_ORG        = "iot-organization"
+    INFLUXDB_BUCKET     = "iot-data"
+    FAILURE_THRESHOLD   = "0.5"
   }
   handler                 = "transform.lambda_handler"
   runtime                 = "python3.12"
   s3_bucket               = module.transform_function_code.bucket
   s3_key                  = "transform.zip"
   layers                  = []
-  vpc_subnet_ids         = module.vpc.private_subnets
+  security_group_ids      = [module.lambda_security_group.id]
+  subnet_ids              = module.vpc.private_subnets
   code_signing_config_arn = ""
 
   depends_on = [module.transform_function_code]
@@ -540,7 +557,7 @@ module "transform_lambda_dlq" {
         Effect    = "Allow"
         Principal = { Service = "lambda.amazonaws.com" }
         Action    = "sqs:SendMessage"
-        Resource  = module.transform_lambda_dlq.arn
+        Resource  = "arn:aws:sqs:${var.region}:${data.aws_caller_identity.current.account_id}:transform-lambda-dlq"
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = module.transform_function.arn

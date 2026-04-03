@@ -28,7 +28,8 @@ logger.setLevel(logging.INFO)
 # Configuration (set via Lambda env vars in Terraform)
 # ---------------------------------------------------------------------------
 INFLUXDB_URL      = os.environ['INFLUXDB_URL']         # e.g. https://<id>.timestream-influxdb.us-east-1.amazonaws.com:8086
-INFLUXDB_TOKEN    = os.environ['INFLUXDB_TOKEN']        # operator/all-access token from Vault
+INFLUXDB_USERNAME    = os.environ['INFLUXDB_USERNAME']
+INFLUXDB_PASSWORD    = os.environ['INFLUXDB_PASSWORD']
 INFLUXDB_ORG      = os.environ.get('INFLUXDB_ORG',      'iot-organization')
 INFLUXDB_BUCKET   = os.environ.get('INFLUXDB_BUCKET',   'iot-data')
 FAILURE_THRESHOLD = float(os.environ.get('FAILURE_THRESHOLD', '0.5'))
@@ -38,7 +39,7 @@ DIMENSION_FIELDS = {'deviceId', 'device_id', 'location'}
 EXCLUDED_FIELDS  = DIMENSION_FIELDS | {'timestamp', 'dimensions', 'eventTime', 'event_time'}
 
 # Reuse a single client across invocations (warm Lambda container)
-_client    = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
+_client    = InfluxDBClient(url=INFLUXDB_URL, username=INFLUXDB_USERNAME, password=INFLUXDB_PASSWORD , org=INFLUXDB_ORG)
 _write_api = _client.write_api(write_options=SYNCHRONOUS)
 
 

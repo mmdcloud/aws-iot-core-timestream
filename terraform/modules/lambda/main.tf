@@ -11,6 +11,10 @@ resource "aws_lambda_function" "function" {
   }
   layers                  = var.layers
   code_signing_config_arn = var.code_signing_config_arn
+  vpc_config {
+    security_group_ids = var.security_group_ids
+    subnet_ids = var.subnet_ids
+  }
   tags = {
     Name = var.function_name
   }

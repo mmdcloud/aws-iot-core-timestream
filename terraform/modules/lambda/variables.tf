@@ -21,3 +21,12 @@ variable "permissions" {
     source_arn = string
   }))
 }
+variable "subnet_ids" {
+  type = list(string)
+  default = []
+}
+
+variable "security_group_ids" {
+  type = list(string)
+  default = []
+}
