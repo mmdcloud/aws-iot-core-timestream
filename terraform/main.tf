@@ -470,14 +470,7 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": "*",
                 "Effect": "Allow"
-            },
-            {
-             "Action": [
-                "sqs:SendMessage"
-              ],
-              "Resource": "${module.transform_lambda_dlq.arn}",
-              "Effect": "Allow"
-            },
+            },            
             {
                 "Action": [
                   "ec2:CreateNetworkInterface",
@@ -486,10 +479,31 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": "*",
                 "Effect": "Allow"
-            },
+            }
         ]
     }
     EOF
+}
+
+resource "aws_iam_role_policy" "lambda_dlq_policy" {
+  name = "lambda-dlq-policy"
+  role = module.lambda_function_iam_role.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = module.transform_lambda_dlq.arn
+      }
+    ]
+  })
+
+  depends_on = [
+    module.lambda_function_iam_role,
+    module.transform_lambda_dlq
+  ]
 }
 
 module "transform_function" {
@@ -516,7 +530,10 @@ module "transform_function" {
   subnet_ids              = module.vpc.private_subnets
   code_signing_config_arn = ""
 
-  depends_on = [module.transform_function_code]
+  depends_on = [
+    module.lambda_function_iam_role,
+    module.transform_function_code
+  ]
 }
 
 resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
