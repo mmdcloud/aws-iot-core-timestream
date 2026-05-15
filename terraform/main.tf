@@ -122,14 +122,6 @@ module "flow_log_group" {
   retention_in_days = 365
 }
 
-# Add VPC Flow Logs for security monitoring
-resource "aws_flow_log" "vpc_flow_log" {
-  iam_role_arn    = module.vpc_flow_logs_role.arn
-  log_destination = module.flow_log_group.arn
-  traffic_type    = "ALL"
-  vpc_id          = module.vpc.vpc_id
-}
-
 module "vpc_flow_logs_role" {
   source             = "./modules/iam"
   role_name          = "vpc-flow-logs-role"
@@ -173,16 +165,10 @@ module "vpc_flow_logs_role" {
     EOF
 }
 
-module "vpc_flow_log_group" {
-  source            = "./modules/cloudwatch/cloudwatch-log-group"
-  log_group_name    = "/aws/vpc/flow-logs/iot"
-  skip_destroy      = false
-  retention_in_days = 90
-}
-
-resource "aws_flow_log" "iot_vpc_flow_log" {
+# Add VPC Flow Logs for security monitoring
+resource "aws_flow_log" "vpc_flow_log" {
   iam_role_arn    = module.vpc_flow_logs_role.arn
-  log_destination = module.vpc_flow_log_group.arn
+  log_destination = module.flow_log_group.arn
   traffic_type    = "ALL"
   vpc_id          = module.vpc.vpc_id
 }
