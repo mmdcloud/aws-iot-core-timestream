@@ -297,21 +297,34 @@ module "destination_bucket" {
 }
 
 module "athena_temp_results_bucket" {
-  source        = "./modules/s3"
-  bucket_name   = "athena-temp-results-bucket-${random_id.id.hex}"
-  objects       = []
-  bucket_policy = ""
+  source      = "./modules/s3"
+  bucket_name = "athena-temp-results-bucket-${random_id.id.hex}"
+  objects     = []
+  bucket_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyNonSSL"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        "arn:aws:s3:::athena-temp-results-bucket-${random_id.id.hex}",
+        "arn:aws:s3:::athena-temp-results-bucket-${random_id.id.hex}/*"
+      ]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
   cors = [
     {
       allowed_headers = ["*"]
       allowed_methods = ["GET"]
-      allowed_origins = ["*"]
+      allowed_origins = ["https://*.amazonaws.com"]
       max_age_seconds = 3000
     },
     {
       allowed_headers = ["*"]
       allowed_methods = ["PUT"]
-      allowed_origins = ["*"]
+      allowed_origins = ["https://*.amazonaws.com"]
       max_age_seconds = 3000
     }
   ]
@@ -440,14 +453,6 @@ module "lambda_function_iam_role" {
                   "kms:GenerateDataKey"
                 ],
                 "Resource": "${aws_kms_key.iot_kms.arn}",
-                "Effect": "Allow"
-            },
-            {
-                "Action": [
-                  "timestream:WriteRecords",
-                  "timestream:DescribeEndpoints"
-                ],
-                "Resource": "arn:aws:timestream:${var.region}:*:database/*/table/*",
                 "Effect": "Allow"
             },
             {
@@ -723,7 +728,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   name        = "iot_to_kinesis_rule"
   description = "Rule to send IoT data to Kinesis Data Stream"
   enabled     = true
-  sql         = "SELECT * FROM 'topic/mqtt'"
+  sql         = "SELECT * FROM 'topic/mqtt/${aws_iot_thing.thing.name}/+'"
   sql_version = "2016-03-23"
   error_action {
     cloudwatch_logs {

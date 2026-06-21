@@ -14,6 +14,7 @@ output "iot_thing_name" {
 }
 
 output "iot_certificate_arn" {
+  sensitive = true
   description = "ARN of the IoT device certificate"
   value       = aws_iot_certificate.cert.arn
 }
