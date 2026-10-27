@@ -32,7 +32,7 @@ apt-get install -y python3-pip python3-dev python3-venv awscli jq
 # ---------------------------------------------------------------------------
 # 3. Python dependencies
 # ---------------------------------------------------------------------------
-pip3 install --break-system-packages awsiotsdk python-dotenv
+pip3 install --break-system-packages awsiotsdk python-dotenv 2>/dev/null || pip3 install awsiotsdk python-dotenv
 
 # ---------------------------------------------------------------------------
 # 4. Write .env for mqtt_publish.py

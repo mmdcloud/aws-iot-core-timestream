@@ -28,8 +28,13 @@ logger.setLevel(logging.INFO)
 # Configuration (set via Lambda env vars in Terraform)
 # ---------------------------------------------------------------------------
 INFLUXDB_URL      = os.environ['INFLUXDB_URL']         # e.g. https://<id>.timestream-influxdb.us-east-1.amazonaws.com:8086
-INFLUXDB_USERNAME    = os.environ['INFLUXDB_USERNAME']
-INFLUXDB_PASSWORD    = os.environ['INFLUXDB_PASSWORD']
+if not INFLUXDB_URL.startswith(('http://', 'https://')):
+    INFLUXDB_URL = f"https://{INFLUXDB_URL}"
+if not any(INFLUXDB_URL.endswith(f":{p}") for p in [8086, 443, 80]) and ":8086" not in INFLUXDB_URL:
+    INFLUXDB_URL = f"{INFLUXDB_URL}:8086"
+
+INFLUXDB_USERNAME = os.environ['INFLUXDB_USERNAME']
+INFLUXDB_PASSWORD = os.environ['INFLUXDB_PASSWORD']
 INFLUXDB_ORG      = os.environ.get('INFLUXDB_ORG',      'iot-organization')
 INFLUXDB_BUCKET   = os.environ.get('INFLUXDB_BUCKET',   'iot-data')
 FAILURE_THRESHOLD = float(os.environ.get('FAILURE_THRESHOLD', '0.5'))
@@ -38,9 +43,31 @@ FAILURE_THRESHOLD = float(os.environ.get('FAILURE_THRESHOLD', '0.5'))
 DIMENSION_FIELDS = {'deviceId', 'device_id', 'location'}
 EXCLUDED_FIELDS  = DIMENSION_FIELDS | {'timestamp', 'dimensions', 'eventTime', 'event_time'}
 
-# Reuse a single client across invocations (warm Lambda container)
-_client    = InfluxDBClient(url=INFLUXDB_URL, username=INFLUXDB_USERNAME, password=INFLUXDB_PASSWORD , org=INFLUXDB_ORG)
-_write_api = _client.write_api(write_options=SYNCHRONOUS)
+# Client lifecycle management (re-authenticates if 60-min session cookie expires)
+_client    = None
+_write_api = None
+
+def get_write_api():
+    global _client, _write_api
+    if _client is None:
+        _client = InfluxDBClient(
+            url=INFLUXDB_URL,
+            username=INFLUXDB_USERNAME,
+            password=INFLUXDB_PASSWORD,
+            org=INFLUXDB_ORG
+        )
+        _write_api = _client.write_api(write_options=SYNCHRONOUS)
+    return _write_api
+
+def reset_client():
+    global _client, _write_api
+    if _client is not None:
+        try:
+            _client.close()
+        except Exception:
+            pass
+    _client = None
+    _write_api = None
 
 
 # ---------------------------------------------------------------------------
@@ -185,11 +212,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Batch write to InfluxDB
     write_failures = 0
     if points:
+        write_api = get_write_api()
         try:
-            _write_api.write(bucket=INFLUXDB_BUCKET, record=points)
+            write_api.write(bucket=INFLUXDB_BUCKET, record=points)
             logger.info(f"Wrote {len(points)} points to InfluxDB bucket '{INFLUXDB_BUCKET}'.")
         except InfluxDBError as exc:
             logger.error(f"InfluxDB write error: {exc}", exc_info=True)
+            if getattr(exc, 'response', None) and getattr(exc.response, 'status', None) in (401, 403):
+                reset_client()
             write_failures = len(points)
         except Exception as exc:
             logger.error(f"Unexpected write error: {exc}", exc_info=True)

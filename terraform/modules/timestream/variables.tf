@@ -4,8 +4,8 @@ variable "db_instance_type" {
 }
 
 variable "allocated_storage" {
-  type    = string
-  default = ""
+  type    = number
+  default = 20
 }
 
 variable "timestream_db_name" {

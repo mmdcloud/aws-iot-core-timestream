@@ -67,6 +67,13 @@ module "iot_instance_security_group" {
   ingress_rules = []
   egress_rules = [
     {
+      description = "HTTP for package updates"
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
       description = "MQTT to IoT Core"
       from_port   = 8883
       to_port     = 8883
@@ -338,7 +345,7 @@ module "transform_function_code" {
   objects = [
     {
       key    = "transform.zip"
-      source = "./files/transform.zip"
+      source = "${path.module}/files/transform.zip"
     }
   ]
   bucket_policy = ""
@@ -505,7 +512,7 @@ module "transform_function" {
   env_variables = {
     TIMESTREAM_DATABASE = "iot-influxdb"
     TIMESTREAM_TABLE    = "iot-data"
-    INFLUXDB_URL        = module.influxdb.endpoint
+    INFLUXDB_URL        = "https://${module.influxdb.endpoint}:8086"
     INFLUXDB_USERNAME   = tostring(data.vault_generic_secret.timestream.data["username"])
     INFLUXDB_PASSWORD   = tostring(data.vault_generic_secret.timestream.data["password"])
     INFLUXDB_ORG        = "iot-organization"
@@ -597,14 +604,20 @@ resource "aws_iot_policy" "pubsub" {
         Resource = "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:client/${aws_iot_thing.thing.name}"
       },
       {
-        Effect   = "Allow"
-        Action   = ["iot:Publish", "iot:Receive"]
-        Resource = "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topic/topic/mqtt/${aws_iot_thing.thing.name}/*"
+        Effect = "Allow"
+        Action = ["iot:Publish", "iot:Receive"]
+        Resource = [
+          "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topic/topic/mqtt/${aws_iot_thing.thing.name}",
+          "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topic/topic/mqtt/${aws_iot_thing.thing.name}/*"
+        ]
       },
       {
-        Effect   = "Allow"
-        Action   = "iot:Subscribe"
-        Resource = "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topicfilter/topic/mqtt/${aws_iot_thing.thing.name}/*"
+        Effect = "Allow"
+        Action = "iot:Subscribe"
+        Resource = [
+          "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topicfilter/topic/mqtt/${aws_iot_thing.thing.name}",
+          "arn:aws:iot:${var.region}:${data.aws_caller_identity.current.account_id}:topicfilter/topic/mqtt/${aws_iot_thing.thing.name}/*"
+        ]
       }
     ]
   })
@@ -728,7 +741,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   name        = "iot_to_kinesis_rule"
   description = "Rule to send IoT data to Kinesis Data Stream"
   enabled     = true
-  sql         = "SELECT * FROM 'topic/mqtt/${aws_iot_thing.thing.name}/+'"
+  sql         = "SELECT * FROM 'topic/mqtt/${aws_iot_thing.thing.name}/#'"
   sql_version = "2016-03-23"
   error_action {
     cloudwatch_logs {
@@ -738,7 +751,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   }
   kinesis {
     stream_name   = module.kinesis_stream.name
-    partition_key = "deviceId"
+    partition_key = "$${deviceId}"
     role_arn      = module.iot_kinesis_role.arn
   }
 }
@@ -833,14 +846,14 @@ resource "aws_athena_workgroup" "workgroup" {
 module "influxdb" {
   source                 = "./modules/timestream"
   db_instance_type       = "db.influx.medium"
-  allocated_storage      = "20"
+  allocated_storage      = 20
   timestream_db_name     = "iot-influxdb"
   port                   = 8086
   timestream_db_username = tostring(data.vault_generic_secret.timestream.data["username"])
   timestream_db_password = tostring(data.vault_generic_secret.timestream.data["password"])
   vpc_security_group_ids = [module.influxdb_security_group.id]
   vpc_subnet_ids         = module.vpc.private_subnets
-  bucket                 = module.destination_bucket.bucket
+  bucket                 = "iot-data"
   organization           = "iot-organization"
   publicly_accessible    = false
   tags = {

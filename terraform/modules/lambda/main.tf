@@ -10,7 +10,7 @@ resource "aws_lambda_function" "function" {
     variables = var.env_variables
   }
   layers                  = var.layers
-  code_signing_config_arn = var.code_signing_config_arn
+  code_signing_config_arn = var.code_signing_config_arn != "" ? var.code_signing_config_arn : null
   vpc_config {
     security_group_ids = var.security_group_ids
     subnet_ids = var.subnet_ids
