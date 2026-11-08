@@ -13,6 +13,7 @@ resource "aws_s3_object" "object" {
   bucket = aws_s3_bucket.bucket.id
   source = var.objects[count.index].source
   key    = var.objects[count.index].key
+  etag   = filemd5(var.objects[count.index].source)
 }
 
 # Bucket versioning configuration

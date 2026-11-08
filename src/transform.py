@@ -141,7 +141,7 @@ def to_influxdb_point(
             Point('iot_metrics')
             .tag('deviceId', device_id)
             .tag('location', location)
-            .time(time_ns, WritePrecision.NANOSECONDS)
+            .time(time_ns, WritePrecision.NS)
         )
 
         # Extra dimensions the sender may have nested under a 'dimensions' key

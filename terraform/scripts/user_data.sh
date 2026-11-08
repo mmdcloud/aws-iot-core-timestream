@@ -2,6 +2,14 @@
 set -euxo pipefail
 
 # ---------------------------------------------------------------------------
+# 0. Install & Start SSM Agent (native deb to avoid snap race conditions)
+# ---------------------------------------------------------------------------
+mkdir -p /tmp/ssm
+curl -fsSL https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb -o /tmp/ssm/amazon-ssm-agent.deb
+dpkg -i /tmp/ssm/amazon-ssm-agent.deb || true
+systemctl enable --now amazon-ssm-agent || true
+
+# ---------------------------------------------------------------------------
 # 1. Write IoT certificates
 # ---------------------------------------------------------------------------
 mkdir -p /etc/aws-iot
@@ -21,6 +29,12 @@ chmod 600 /etc/aws-iot/private-key.pem
 # Download Amazon Root CA
 curl -fsSL -o /etc/aws-iot/AmazonRootCA1.pem \
   https://www.amazontrust.com/repository/AmazonRootCA1.pem
+chmod 644 /etc/aws-iot/AmazonRootCA1.pem
+
+# Grant ownership to ubuntu user so service can read credentials
+chown -R ubuntu:ubuntu /etc/aws-iot
+chmod 700 /etc/aws-iot
+chmod 600 /etc/aws-iot/private-key.pem
 
 # ---------------------------------------------------------------------------
 # 2. System packages
@@ -98,3 +112,6 @@ SERVICE
 systemctl daemon-reload
 systemctl enable mqtt-publisher.service
 systemctl start mqtt-publisher.service
+
+# Ensure SSM Agent service is active
+systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true

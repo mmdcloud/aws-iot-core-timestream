@@ -5,6 +5,7 @@ resource "aws_instance" "instance" {
   key_name                    = var.key_name == null ? null : var.key_name 
   associate_public_ip_address = var.associate_public_ip_address
   user_data                   = var.user_data
+  user_data_replace_on_change = true
   subnet_id                   = var.subnet_id
   vpc_security_group_ids      = var.security_groups
   iam_instance_profile        = var.instance_profile

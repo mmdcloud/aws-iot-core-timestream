@@ -43,17 +43,10 @@ module "lambda_security_group" {
   ingress_rules = []
   egress_rules = [
     {
-      description = "InfluxDB access"
-      from_port   = 8086
-      to_port     = 8086
-      protocol    = "tcp"
-      cidr_blocks = ["10.0.0.0/16"]
-    },
-    {
-      description = "HTTPS for AWS APIs"
-      from_port   = 443
-      to_port     = 443
-      protocol    = "tcp"
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
       cidr_blocks = ["0.0.0.0/0"]
     }
   ]
@@ -67,24 +60,10 @@ module "iot_instance_security_group" {
   ingress_rules = []
   egress_rules = [
     {
-      description = "HTTP for package updates"
-      from_port   = 80
-      to_port     = 80
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    },
-    {
-      description = "MQTT to IoT Core"
-      from_port   = 8883
-      to_port     = 8883
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    },
-    {
-      description = "HTTPS for SSM and AWS APIs"
-      from_port   = 443
-      to_port     = 443
-      protocol    = "tcp"
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
       cidr_blocks = ["0.0.0.0/0"]
     }
   ]
@@ -523,6 +502,7 @@ module "transform_function" {
   runtime                 = "python3.12"
   s3_bucket               = module.transform_function_code.bucket
   s3_key                  = "transform.zip"
+  source_code_hash        = filebase64sha256("${path.module}/files/transform.zip")
   layers                  = []
   security_group_ids      = [module.lambda_security_group.id]
   subnet_ids              = module.vpc.private_subnets
@@ -741,7 +721,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   name        = "iot_to_kinesis_rule"
   description = "Rule to send IoT data to Kinesis Data Stream"
   enabled     = true
-  sql         = "SELECT * FROM 'topic/mqtt/${aws_iot_thing.thing.name}/#'"
+  sql         = "SELECT * FROM 'topic/mqtt/#' WHERE topic(3) = '${aws_iot_thing.thing.name}'"
   sql_version = "2016-03-23"
   error_action {
     cloudwatch_logs {
@@ -751,7 +731,7 @@ resource "aws_iot_topic_rule" "kinesis_rule" {
   }
   kinesis {
     stream_name   = module.kinesis_stream.name
-    partition_key = "$${deviceId}"
+    partition_key = "$${topic()}"
     role_arn      = module.iot_kinesis_role.arn
   }
 }
