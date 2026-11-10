@@ -30,6 +30,11 @@ output "influxdb_endpoint" {
   sensitive   = true
 }
 
+output "influxdb_ui_url" {
+  description = "Direct InfluxDB Web UI URL"
+  value       = "https://${module.influxdb.endpoint}:8086"
+}
+
 output "transform_lambda_arn" {
   description = "ARN of the Kinesis-to-InfluxDB transform Lambda"
   value       = module.transform_function.arn

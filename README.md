@@ -39,6 +39,43 @@ Amazon Athena (SQL Analytics)
 - **Infrastructure as Code**: 100% Terraform-managed infrastructure with modular design
 - **Production-Ready Security**: VPC isolation, security groups, IAM least-privilege policies, and encrypted data transport
 
+## 📸 Visual Pipeline Walkthrough
+
+Here is the complete end-to-end IoT data pipeline in action:
+
+### 1. Automated Infrastructure Provisioning (Terraform)
+Execution of Terraform apply successfully deploying 92 AWS resources (VPC, IoT Core rules, Kinesis Data Streams, Lambda, and Timestream for InfluxDB) with output parameters.
+
+![Terraform Apply Outputs](screenshots/Screenshot%20from%202026-11-10%2015-10-09.png)
+
+---
+
+### 2. S3 Storage Buckets
+Automated provisioning of dedicated S3 buckets for IoT cold-storage data lake archival and Lambda deployment artifacts.
+
+![AWS S3 Buckets](screenshots/Screenshot%20from%202026-11-10%2015-12-08.png)
+
+---
+
+### 3. Serverless Stream Transformer (AWS Lambda)
+The Python 3.12 event-driven Lambda function (`transform-function`) attached to Kinesis Data Streams for data parsing, transformation, and batch loading.
+
+![AWS Lambda Function](screenshots/Screenshot%20from%202026-11-10%2015-13-22.png)
+
+---
+
+### 4. Real-Time Processing & CloudWatch Monitoring
+Live Amazon CloudWatch Logs showing records consumed from Kinesis shards and successfully written to Amazon Timestream for InfluxDB with zero failures.
+
+![CloudWatch Logs](screenshots/Screenshot%20from%202026-11-10%2015-16-45.png)
+
+---
+
+### 5. Timestream for InfluxDB Data Explorer (Telemetry Visualization)
+Real-time sensor telemetry (`humidity`, `temperature`, `pressure`, `message_count`) from device `thing` queried and visualized live in the InfluxDB Web UI.
+
+![InfluxDB Data Explorer](screenshots/Screenshot%20from%202026-11-10%2015-09-59.png)
+
 ## 📋 Prerequisites
 
 - **Terraform**: >= 1.0.0
@@ -102,38 +139,53 @@ terraform apply
 ### 5. Verify Deployment
 
 ```bash
-# Get IoT endpoint
+# 1. Get IoT endpoint
 aws iot describe-endpoint --endpoint-type iot:Data-ATS
 
-# Check Kinesis stream
+# 2. Check Kinesis stream status
 aws kinesis describe-stream --stream-name kinesis-stream
 
-# Verify Timestream database
-aws timestream-query query --query-string "SELECT * FROM iot_timestream_db LIMIT 10"
+# 3. View Timestream for InfluxDB Web UI URL
+terraform -chdir=terraform output influxdb_ui_url
+
+# 4. Tail Lambda transformation logs in real-time
+aws logs tail /aws/lambda/transform-function --follow
 ```
 
 ## 📁 Project Structure
 
 ```
 .
-├── main.tf                    # Main infrastructure configuration
-├── variables.tf               # Input variables
-├── outputs.tf                 # Output values
-├── terraform.tfvars           # Variable values (gitignored)
-├── modules/
-│   ├── vpc/                   # VPC and networking module
-│   ├── security-groups/       # Security group module
-│   ├── ec2/                   # EC2 instance module
-│   ├── s3/                    # S3 bucket module
-│   ├── kinesis/               # Kinesis stream module
-│   ├── lambda/                # Lambda function module
-│   ├── iam/                   # IAM roles and policies module
-│   └── timestream/            # Timestream database module
-├── scripts/
-│   └── user_data.sh           # EC2 instance initialization script
-├── lambda/
-│   └── lambda.py              # Lambda transformation logic
-└── README.md                  # This file
+├── screenshots/               # Visual proof & pipeline execution screenshots
+├── src/                       # Application source code
+│   ├── mqtt_publish.py        # EC2 IoT simulated publisher script
+│   ├── transform.py           # Lambda Kinesis-to-InfluxDB transformer
+│   └── requirements.txt       # Python dependencies
+├── terraform/                 # Infrastructure as Code (Terraform)
+│   ├── main.tf                # Main pipeline orchestration
+│   ├── variables.tf           # Input variable declarations
+│   ├── outputs.tf             # Outputs (endpoints, URLs, ARNs)
+│   ├── terraform.tfvars       # Environment configurations
+│   ├── provider.tf            # AWS & Vault provider setup
+│   ├── files/
+│   │   └── transform.zip      # Packaged Lambda zip artifact
+│   ├── scripts/
+│   │   └── user_data.sh       # EC2 IoT provisioning script
+│   └── modules/               # Reusable Terraform modules
+│       ├── cloudwatch/        # CloudWatch alarms & log groups
+│       ├── ec2/               # Simulated IoT publisher EC2 instance
+│       ├── firehose/          # Kinesis Data Firehose module
+│       ├── iam/               # IAM roles & least-privilege policies
+│       ├── kinesis/           # Kinesis Data Streams
+│       ├── lambda/            # Serverless transformer function
+│       ├── s3/                # Storage buckets & encryption
+│       ├── security-groups/   # Security groups & network access
+│       ├── sns/               # Notification topics & subscriptions
+│       ├── sqs/               # Dead Letter Queues (DLQ)
+│       ├── timestream/        # Amazon Timestream for InfluxDB
+│       └── vpc/               # Multi-AZ VPC networking
+├── LICENSE                    # MIT License
+└── README.md                  # Project documentation & visual guide
 ```
 
 ## 🔧 Configuration

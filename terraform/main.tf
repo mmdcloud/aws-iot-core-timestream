@@ -76,12 +76,23 @@ module "influxdb_security_group" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description     = "InfluxDB Traffic from VPC"
+      description = "InfluxDB Traffic from Lambda and EC2"
+      from_port   = 8086
+      to_port     = 8086
+      protocol    = "tcp"
+      security_groups = [
+        module.lambda_security_group.id,
+        module.iot_instance_security_group.id
+      ]
+      cidr_blocks = []
+    },
+    {
+      description     = "InfluxDB Web UI and API access"
       from_port       = 8086
       to_port         = 8086
       protocol        = "tcp"
-      security_groups = [module.lambda_security_group.id]
-      cidr_blocks     = []
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -764,10 +775,10 @@ module "influxdb" {
   timestream_db_username = tostring(data.vault_generic_secret.timestream.data["username"])
   timestream_db_password = tostring(data.vault_generic_secret.timestream.data["password"])
   vpc_security_group_ids = [module.influxdb_security_group.id]
-  vpc_subnet_ids         = module.vpc.private_subnets
+  vpc_subnet_ids         = module.vpc.public_subnets
   bucket                 = "iot-data"
   organization           = "iot-organization"
-  publicly_accessible    = false
+  publicly_accessible    = true
   tags = {
     Project     = "iot"
     Environment = "production"
